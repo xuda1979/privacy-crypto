@@ -41,6 +41,19 @@ class Wallet:
         )
         return base64.b64encode(data).decode("ascii")
 
+    @staticmethod
+    def import_address(address: str) -> Tuple[Point, Point]:
+        """Parse *address* and return the embedded public keys."""
+
+        decoded = base64.b64decode(address.encode("ascii"))
+        if len(decoded) != 66:
+            raise ValueError("Addresses must encode two compressed points")
+        view_bytes = decoded[:33]
+        spend_bytes = decoded[33:]
+        view_point = crypto_utils.bytes_to_point(view_bytes)
+        spend_point = crypto_utils.bytes_to_point(spend_bytes)
+        return view_point, spend_point
+
     def key_image(self) -> Point:
         """Derive a key image to prevent double spending."""
 
