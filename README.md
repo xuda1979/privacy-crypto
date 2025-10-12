@@ -42,13 +42,16 @@ blockchain, wallet management helpers and transaction submission endpoints. To
 start the service locally run:
 
 ```bash
-./scripts/deploy.sh
+./scripts/run_node.sh
 ```
 
-By default the server listens on `0.0.0.0:8000`. Override the `HOST` and `PORT`
-environment variables if you need to bind to a different interface or port
-number. The generated OpenAPI schema and interactive Swagger UI are available
-at `http://<host>:<port>/docs` once the server is running.
+The helper script creates (or reuses) a virtual environment in `.venv`, installs
+the Python dependencies, and starts the node with
+[uvicorn](https://www.uvicorn.org/). By default the server listens on
+`0.0.0.0:8000`. Override the `HOST`, `PORT`, `PYTHON`, or `VENV_DIR` environment
+variables if you need to customise how the service is launched. The generated
+OpenAPI schema and interactive Swagger UI are available at
+`http://<host>:<port>/docs` once the server is running.
 
 The API supports the following workflow:
 
