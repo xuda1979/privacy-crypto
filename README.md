@@ -36,9 +36,10 @@ pytest
 项目基于 [FastAPI](https://fastapi.tiangolo.com/) 提供 HTTP API，涵盖区块链访问、钱包管理以及交易提交等端点。本地启动服务：
 
 ```bash
-./scripts/deploy.sh
+./scripts/run_node.sh
 ```
 
+ 
 默认监听地址为 `0.0.0.0:8000`。如需变更监听地址或端口，可设置 `HOST`、`PORT` 环境变量。服务启动后，可在 `http://<host>:<port>/docs` 访问自动生成的 OpenAPI 描述与交互式 Swagger UI。
 
 典型的 API 使用流程如下：
@@ -52,3 +53,25 @@ pytest
 ## 迈向生产级隐私加密货币的路线图
 
 当前仓库演示了隐私币所需的核心密码学组件，但仍定位为原型。`docs/PROJECT_COMPLETION_PLAN.md` 汇总了迈向可部署、类比特币的隐私货币所需补齐的架构差距，以及为交付安全节点、完善钱包体验与运维工具所规划的里程碑。
+ 
+The helper script creates (or reuses) a virtual environment in `.venv`, installs
+the Python dependencies, and starts the node with
+[uvicorn](https://www.uvicorn.org/). By default the server listens on
+`0.0.0.0:8000`. Override the `HOST`, `PORT`, `PYTHON`, or `VENV_DIR` environment
+variables if you need to customise how the service is launched. The generated
+OpenAPI schema and interactive Swagger UI are available at
+`http://<host>:<port>/docs` once the server is running.
+
+The API supports the following workflow:
+
+1. `POST /wallets` to create a new wallet. The response includes a `wallet_id`
+   used to reference the wallet in future calls alongside the exported public
+   address.
+2. `GET /wallets` to enumerate known wallets without exposing private keys.
+3. `POST /transactions` to create a ring-signature protected transaction from
+   one wallet to another. The `ring_size` parameter determines how many decoy
+   wallets participate in the ring.
+4. `POST /mine` to mine pending transactions into a new block.
+5. `GET /chain` and `GET /pending` to inspect chain state and queued
+   transactions.
+ 
