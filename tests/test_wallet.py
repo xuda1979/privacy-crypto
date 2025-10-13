@@ -1,5 +1,9 @@
+import base64
+
 import pytest
 
+from src import crypto_utils
+from src.main import create_transaction
 from src.wallet import Wallet
 
 
@@ -37,3 +41,38 @@ def test_public_keys_tuple_matches_properties():
 def test_import_address_rejects_invalid_payloads(invalid):
     with pytest.raises(ValueError):
         Wallet.import_address(invalid)
+
+
+def test_recipient_can_detect_and_decrypt_transaction():
+    sender = Wallet.generate()
+    recipient = Wallet.generate()
+    decoy = Wallet.generate()
+
+    tx = create_transaction(sender, recipient, amount=42, ring_members=[sender, decoy])
+    tx_dict = tx.to_dict()
+
+    assert recipient.belongs_to_transaction(tx_dict)
+    assert not decoy.belongs_to_transaction(tx_dict)
+
+    amount = recipient.decrypt_transaction_amount(tx_dict)
+    assert amount == 42
+
+    one_time_private = recipient.derive_one_time_private_key(tx_dict)
+    stealth_bytes = base64.b64decode(tx_dict["stealth_address"].encode("ascii"))
+    stealth_point = crypto_utils.bytes_to_point(stealth_bytes)
+    assert crypto_utils.scalar_mult(one_time_private) == stealth_point
+
+
+def test_decrypt_fails_for_non_recipient():
+    sender = Wallet.generate()
+    recipient = Wallet.generate()
+    outsider = Wallet.generate()
+
+    tx = create_transaction(sender, recipient, amount=7, ring_members=[sender, outsider])
+    tx_dict = tx.to_dict()
+
+    with pytest.raises(ValueError):
+        outsider.decrypt_transaction_amount(tx_dict)
+
+    with pytest.raises(ValueError):
+        outsider.derive_one_time_private_key(tx_dict)
