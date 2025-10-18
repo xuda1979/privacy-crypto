@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    image: privacy-crypto:latest
+    container_name: api
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+    ports:
+      - "8000:8000"
+    command: ["/bin/sh","-c","./scripts/run_node.sh"]
+    restart: unless-stopped
+
+  p2p:
+    build: .
+    image: privacy-crypto:latest
+    environment:
+      - P2P_HOST=0.0.0.0
+      - P2P_PORT=9000
+      # Add peer bootstrap URLs below or wire with compose service names
+      # - PEERS=ws://p2p:9000
+      - UVLOOP=1
+    depends_on:
+      - api
+    ports:
+      - "9000:9000"
+    command: ["/bin/sh","-c","./scripts/run_p2p.sh"]
+    restart: unless-stopped
+
+networks:
+  default:
+    name: privacycrypto
+    driver: bridge
