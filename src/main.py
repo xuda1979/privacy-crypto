@@ -105,7 +105,10 @@ def create_transaction(
         ephemeral_scalar, recipient.view_public_key
     )
     box = secret.SecretBox(shared_secret)
-    encrypted_amount = box.encrypt(amount.to_bytes(8, "big"), utils.random(secret.SecretBox.NONCE_SIZE))
+    encrypted_amount_bytes = box.encrypt(
+        amount.to_bytes(8, "big"), utils.random(secret.SecretBox.NONCE_SIZE)
+    )
+    encrypted_amount = base64.b64encode(encrypted_amount_bytes).decode("ascii")
 
     # Pedersen commitment for the confidential amount.
     blinding = crypto_utils.random_scalar()
@@ -126,7 +129,8 @@ def create_transaction(
         "key_image": key_image,
         "stealth_address": _encode_point(stealth_public),
         "ephemeral_public_key": _encode_point(ephemeral_public),
-        "amount_commitment": commitment_dict,
+        "encrypted_amount": encrypted_amount,
+        "amount_commitment": commitment_dict["commitment"],
         "memo": memo,
     }
     message = canonical_hash(message_payload)
@@ -138,7 +142,7 @@ def create_transaction(
         key_image=key_image,
         stealth_address=_encode_point(stealth_public),
         ephemeral_public_key=_encode_point(ephemeral_public),
-        encrypted_amount=base64.b64encode(encrypted_amount).decode("ascii"),
+        encrypted_amount=encrypted_amount,
         amount_commitment=commitment_dict["commitment"],
         commitment_proof=commitment_dict,
         ring_signature=ring_signature_payload,

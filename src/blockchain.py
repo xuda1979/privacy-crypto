@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 from . import crypto_utils, ring_signature
+from .utils.serialization import canonical_hash
 
 
 def compute_hash(block: "Block") -> str:
@@ -37,11 +38,28 @@ class Block:
 
 
 def _decode_point(value: str):
-    return crypto_utils.bytes_to_point(base64.b64decode(value))
+    data = base64.b64decode(value)
+    return crypto_utils.bytes_to_point(data)
 
 
 def _decode_scalar(value: str) -> int:
     return crypto_utils.bytes_to_int(base64.b64decode(value))
+
+
+def _normalised_transaction_payload(transaction: Dict[str, object]) -> Dict[str, object]:
+    """Return the canonical payload committed to by signatures/tx-id."""
+
+    return {
+        "ring_public_keys": transaction["ring_public_keys"],
+        "key_image": transaction["key_image"],
+        "stealth_address": transaction["stealth_address"],
+        "ephemeral_public_key": transaction["ephemeral_public_key"],
+        "encrypted_amount": transaction["encrypted_amount"],
+        "amount_commitment": transaction["amount_commitment"],
+        "commitment_proof": transaction["commitment_proof"],
+        "timestamp": transaction["timestamp"],
+        "memo": transaction.get("memo"),
+    }
 
 
 class Blockchain:
@@ -93,6 +111,11 @@ class Blockchain:
         if not required_fields.issubset(transaction):
             return False
 
+        if not isinstance(transaction.get("ring_public_keys"), list):
+            return False
+        if len(transaction["ring_public_keys"]) < 2:
+            return False
+
         try:
             commitment_proof = transaction["commitment_proof"]
             commitment_point = _decode_point(commitment_proof["commitment"])
@@ -105,6 +128,11 @@ class Blockchain:
         if transaction.get("amount_commitment") != commitment_proof.get("commitment"):
             return False
 
+        try:
+            _decode_point(transaction["amount_commitment"])
+        except (TypeError, ValueError):
+            return False
+
         if not crypto_utils.verify_commitment(commitment_point, proof_point, s1, s2):
             return False
 
@@ -113,16 +141,20 @@ class Blockchain:
         except ValueError:
             return False
 
+        # Do not allow duplicate public keys in the ring to avoid trivial deanonymisation
+        if len({crypto_utils.point_to_bytes(point) for point in ring_points}) != len(ring_points):
+            return False
+
         message_payload = {
             "ring_public_keys": transaction["ring_public_keys"],
             "key_image": transaction["key_image"],
             "stealth_address": transaction["stealth_address"],
             "ephemeral_public_key": transaction["ephemeral_public_key"],
-            "amount_commitment": transaction["commitment_proof"],
+            "encrypted_amount": transaction["encrypted_amount"],
+            "amount_commitment": transaction["amount_commitment"],
             "memo": transaction.get("memo"),
         }
-        serialized = json.dumps(message_payload, sort_keys=True, separators=(",", ":"))
-        message = crypto_utils.hash_bytes(serialized.encode("utf-8"))
+        message = canonical_hash(message_payload)
 
         try:
             signature = transaction["ring_signature"]
@@ -140,6 +172,39 @@ class Blockchain:
             _decode_point(transaction["key_image"])
         except ValueError:
             return False
+
+        # Validate stealth/ephemeral keys are well-formed points
+        try:
+            _decode_point(transaction["stealth_address"])
+            _decode_point(transaction["ephemeral_public_key"])
+        except ValueError:
+            return False
+
+        # Ensure the encrypted payload is valid base64
+        try:
+            base64.b64decode(transaction["encrypted_amount"], validate=True)
+        except (TypeError, ValueError):
+            return False
+
+        # Prevent excessively skewed timestamps (potential time-warp attacks)
+        try:
+            timestamp = float(transaction["timestamp"])
+        except (TypeError, ValueError):
+            return False
+        now = time.time()
+        if timestamp > now + 5 * 60:
+            return False
+        if timestamp < now - 24 * 60 * 60:
+            return False
+
+        # When a transaction id is present ensure it commits to the canonical payload
+        tx_id = transaction.get("tx_id")
+        if tx_id is not None:
+            if not isinstance(tx_id, str):
+                return False
+            expected = crypto_utils.hash_bytes(canonical_hash(_normalised_transaction_payload(transaction))).hex()
+            if tx_id != expected:
+                return False
 
         return True
 
