@@ -88,6 +88,7 @@ docker compose up --build --scale p2p=4
 **新增**
 - `src/p2p/`：最小可用 P2P 实现（FastAPI WebSocket + PyNaCl 加密管道 + Dandelion++ 路由 + 去重/TTL mempool）
 - `src/utils/compact.py`：varint 紧凑编码/解码
+- `src/utils/serialization.py`：统一的规范化哈希工具，支持审计证明签名
 - `scripts/run_p2p.sh`、`scripts/devnet.sh`
 - 容器化：`Dockerfile`、`docker-compose.yml`
 - 文档：`docs/PRIVACY.md`、`docs/INNOVATIONS.md`、`docs/DEPLOYMENT.md`
@@ -98,8 +99,9 @@ docker compose up --build --scale p2p=4
 - 内置去重（seen-set）、按费率的简易 mempool 准入与过期
 
 **抗审查设计钩子**
-- mempool 准入仅依赖**交易有效性**与**最小费率**；没有任何地址名单或管理员开关  
+- mempool 准入仅依赖**交易有效性**与**最小费率**；没有任何地址名单或管理员开关
 - Dandelion++ 传播随机化路径与延时，降低“先见”攻击可行性
+- **选择性披露（Selective disclosure）**：交易创建时自动生成 `audit_bundle`（内含承诺盲因子、金额与观测公钥的 Schnorr 签名），可供用户在需要时向受信方证明资金来源，贴合 FATF Travel Rule 与 MiCA 合规诉求
 
 ---
 

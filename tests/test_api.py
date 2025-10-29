@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api import app, reset_state
+from src.wallet import verify_audit_bundle
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +29,8 @@ def test_wallet_creation_and_transaction_flow():
     assert response.status_code == 200
     tx_data = response.json()
     assert "tx_id" in tx_data
+    assert "audit_bundle" in tx_data
+    assert verify_audit_bundle(tx_data["audit_bundle"])
     pending = client.get("/pending").json()
     assert len(pending["pending"]) == 1
 

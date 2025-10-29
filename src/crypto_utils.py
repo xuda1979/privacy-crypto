@@ -8,12 +8,13 @@ from third-party libraries.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import secrets
-from typing import Iterable, Tuple
+from typing import Dict, Iterable, Tuple
 
 from ecdsa import SECP256k1
-from ecdsa.ellipticcurve import Point
+from ecdsa.ellipticcurve import Point, PointJacobi
 
 
 CURVE = SECP256k1
@@ -173,4 +174,70 @@ def verify_commitment(
     left = point_add(scalar_mult(s1, G), scalar_mult(s2, H))
     right = point_add(t, scalar_mult(challenge, commitment))
     return left == right
+
+
+def schnorr_sign(message: bytes, private_key: int) -> Tuple[Point, int]:
+    """Return a deterministic Schnorr signature over *message*."""
+
+    if not isinstance(message, (bytes, bytearray)):
+        raise TypeError("message must be bytes-like")
+
+    k = random_scalar()
+    r_point = scalar_mult(k, G)
+    if hasattr(r_point, "to_affine"):
+        r_point = r_point.to_affine()
+    challenge = hash_to_int(point_to_bytes(r_point), message)
+    s = (k + challenge * private_key) % CURVE_ORDER
+    return r_point, s
+
+
+def schnorr_verify(message: bytes, public_key: Point, signature: Tuple[Point, int]) -> bool:
+    """Verify a Schnorr signature produced by :func:`schnorr_sign`."""
+
+    if not isinstance(message, (bytes, bytearray)):
+        return False
+
+    try:
+        r_point, s_value = signature
+    except (TypeError, ValueError):
+        return False
+
+    if not isinstance(r_point, (Point, PointJacobi)) or not isinstance(s_value, int):
+        return False
+
+    challenge = hash_to_int(point_to_bytes(r_point), message)
+    left = scalar_mult(s_value, G)
+    right = point_add(r_point, scalar_mult(challenge, public_key))
+    return left == right
+
+
+def encode_schnorr_signature(signature: Tuple[Point, int]) -> Dict[str, str]:
+    """Encode a Schnorr signature as base64 strings for transport."""
+
+    r_point, s_value = signature
+    r_bytes = point_to_bytes(r_point)
+    s_bytes = int_to_bytes(s_value)
+    return {
+        "R": base64.b64encode(r_bytes).decode("ascii"),
+        "s": base64.b64encode(s_bytes).decode("ascii"),
+    }
+
+
+def decode_schnorr_signature(payload: Dict[str, str]) -> Tuple[Point, int]:
+    """Decode the representation produced by :func:`encode_schnorr_signature`."""
+
+    if not isinstance(payload, dict):
+        raise TypeError("signature payload must be a mapping")
+
+    try:
+        r_encoded = payload["R"]
+        s_encoded = payload["s"]
+    except KeyError as exc:  # pragma: no cover - defensive
+        raise ValueError("signature payload missing fields") from exc
+
+    r_bytes = base64.b64decode(str(r_encoded).encode("ascii"))
+    s_bytes = base64.b64decode(str(s_encoded).encode("ascii"))
+    r_point = bytes_to_point(r_bytes)
+    s_value = bytes_to_int(s_bytes)
+    return r_point, s_value
 

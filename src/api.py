@@ -41,6 +41,7 @@ class TransactionRequest(BaseModel):
 class TransactionResponse(BaseModel):
     tx_id: str
     pending_transactions: int
+    audit_bundle: Dict[str, Any]
 
 
 class PendingResponse(BaseModel):
@@ -115,7 +116,12 @@ def submit_transaction(payload: TransactionRequest) -> TransactionResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return TransactionResponse(tx_id=tx_dict["tx_id"], pending_transactions=len(_blockchain.pending_transactions))
+    audit_bundle = transaction.audit_bundle or {}
+    return TransactionResponse(
+        tx_id=tx_dict["tx_id"],
+        pending_transactions=len(_blockchain.pending_transactions),
+        audit_bundle=audit_bundle,
+    )
 
 
 @app.post("/mine", response_model=MineResponse)
