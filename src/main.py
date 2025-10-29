@@ -12,6 +12,7 @@ from nacl import secret, utils
 
 from . import crypto_utils, ring_signature
 from .wallet import Wallet
+from .utils.serialization import canonical_hash
 
 
 def _encode_point(point) -> str:
@@ -20,11 +21,6 @@ def _encode_point(point) -> str:
 
 def _encode_scalar(value: int) -> str:
     return base64.b64encode(crypto_utils.int_to_bytes(value)).decode("ascii")
-
-
-def _transaction_message(payload: Dict[str, object]) -> bytes:
-    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return crypto_utils.hash_bytes(serialized.encode("utf-8"))
 
 
 @dataclass
@@ -41,6 +37,8 @@ class Transaction:
     ring_signature: Dict[str, object]
     timestamp: float = field(default_factory=time.time)
     memo: str | None = None
+
+    audit_bundle: Dict[str, object] | None = field(default=None, repr=False)
 
     def to_dict(self) -> Dict[str, object]:
         payload = {
@@ -60,7 +58,7 @@ class Transaction:
         return payload
 
     def compute_tx_id(self) -> str:
-        message = _transaction_message(
+        message = canonical_hash(
             {
                 "ring_public_keys": self.ring_public_keys,
                 "key_image": self.key_image,
@@ -131,7 +129,7 @@ def create_transaction(
         "amount_commitment": commitment_dict,
         "memo": memo,
     }
-    message = _transaction_message(message_payload)
+    message = canonical_hash(message_payload)
 
     ring_signature_payload = ring_signature.sign(message, ring_points, sender.spend_private_key, signer_index)
 
@@ -146,6 +144,24 @@ def create_transaction(
         ring_signature=ring_signature_payload,
         memo=memo,
     )
+    tx_id = tx.compute_tx_id()
+
+    audit_payload = {
+        "tx_id": tx_id,
+        "amount": amount,
+        "amount_commitment": commitment_dict["commitment"],
+        "amount_blinding": _encode_scalar(blinding),
+        "view_public_key": _encode_point(sender.view_public_key),
+        "stealth_address": _encode_point(stealth_public),
+        "memo": memo,
+        "timestamp": tx.timestamp,
+    }
+    audit_message = canonical_hash(audit_payload)
+    signature = crypto_utils.schnorr_sign(audit_message, sender.view_private_key)
+    tx.audit_bundle = {
+        "payload": audit_payload,
+        "signature": crypto_utils.encode_schnorr_signature(signature),
+    }
     return tx
 
 

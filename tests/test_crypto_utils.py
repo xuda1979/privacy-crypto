@@ -23,3 +23,12 @@ def test_pedersen_commitment_proof_verifies():
     assert crypto_utils.verify_commitment(commitment, proof_point, s1, s2)
     tampered = (s1 + 1) % crypto_utils.CURVE_ORDER
     assert not crypto_utils.verify_commitment(commitment, proof_point, tampered, s2)
+
+
+def test_schnorr_signature_roundtrip():
+    private_key, public_key = crypto_utils.generate_keypair()
+    message = b"audit-bundle-test"
+    signature = crypto_utils.schnorr_sign(message, private_key)
+    assert crypto_utils.schnorr_verify(message, public_key, signature)
+    altered = (signature[0], (signature[1] + 1) % crypto_utils.CURVE_ORDER)
+    assert not crypto_utils.schnorr_verify(message, public_key, altered)

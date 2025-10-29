@@ -1,10 +1,12 @@
 import base64
 
+import copy
+
 import pytest
 
 from src import crypto_utils
 from src.main import create_transaction
-from src.wallet import Wallet
+from src.wallet import Wallet, verify_audit_bundle
 
 
 def test_wallet_address_roundtrip():
@@ -76,3 +78,18 @@ def test_decrypt_fails_for_non_recipient():
 
     with pytest.raises(ValueError):
         outsider.derive_one_time_private_key(tx_dict)
+
+
+def test_audit_bundle_verification_roundtrip():
+    sender = Wallet.generate()
+    recipient = Wallet.generate()
+    decoy = Wallet.generate()
+
+    tx = create_transaction(sender, recipient, amount=55, ring_members=[sender, decoy])
+    bundle = tx.audit_bundle
+    assert bundle is not None
+    assert verify_audit_bundle(bundle)
+
+    tampered = copy.deepcopy(bundle)
+    tampered["payload"]["amount"] = 99
+    assert not verify_audit_bundle(tampered)

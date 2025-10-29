@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
@@ -10,6 +11,7 @@ from ecdsa.ellipticcurve import Point
 from nacl import secret
 
 from . import crypto_utils
+from .utils.serialization import canonical_hash
 
 
 @dataclass
@@ -136,4 +138,61 @@ class Wallet:
         shared_point = self._shared_point_with(ephemeral)
         tweak = crypto_utils.hash_to_int(crypto_utils.point_to_bytes(shared_point))
         return (tweak + self.spend_private_key) % crypto_utils.CURVE_ORDER
+
+
+def verify_audit_bundle(bundle: Dict[str, object]) -> bool:
+    """Verify a selective-disclosure proof generated for compliant auditing."""
+
+    if not isinstance(bundle, dict):
+        return False
+
+    payload = bundle.get("payload")
+    signature = bundle.get("signature")
+    if not isinstance(payload, dict) or not isinstance(signature, dict):
+        return False
+
+    try:
+        amount = int(payload["amount"])
+        commitment_b64 = payload["amount_commitment"]
+        blinding_b64 = payload["amount_blinding"]
+        view_key_b64 = payload["view_public_key"]
+        timestamp = payload["timestamp"]
+        _ = payload.get("tx_id")
+        _ = payload.get("stealth_address")
+        sig_r_b64 = signature["R"]
+        sig_s_b64 = signature["s"]
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    if not isinstance(timestamp, (int, float)) and timestamp is not None:
+        return False
+
+    try:
+        commitment_bytes = base64.b64decode(str(commitment_b64).encode("ascii"))
+        blinding_bytes = base64.b64decode(str(blinding_b64).encode("ascii"))
+        view_bytes = base64.b64decode(str(view_key_b64).encode("ascii"))
+        r_bytes = base64.b64decode(str(sig_r_b64).encode("ascii"))
+        s_bytes = base64.b64decode(str(sig_s_b64).encode("ascii"))
+    except (binascii.Error, ValueError):
+        return False
+
+    try:
+        commitment_point = crypto_utils.bytes_to_point(commitment_bytes)
+        view_point = crypto_utils.bytes_to_point(view_bytes)
+        r_point = crypto_utils.bytes_to_point(r_bytes)
+    except ValueError:
+        return False
+
+    blinding = crypto_utils.bytes_to_int(blinding_bytes)
+    s_value = crypto_utils.bytes_to_int(s_bytes)
+
+    expected_commitment = crypto_utils.pedersen_commit(amount, blinding)
+    if expected_commitment != commitment_point:
+        return False
+
+    message_hash = canonical_hash(payload)
+    return crypto_utils.schnorr_verify(message_hash, view_point, (r_point, s_value))
+
+
+__all__ = ["Wallet", "verify_audit_bundle"]
 
