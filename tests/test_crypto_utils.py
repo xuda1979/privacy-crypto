@@ -1,3 +1,5 @@
+import pytest
+
 from src import crypto_utils
 
 
@@ -32,3 +34,29 @@ def test_schnorr_signature_roundtrip():
     assert crypto_utils.schnorr_verify(message, public_key, signature)
     altered = (signature[0], (signature[1] + 1) % crypto_utils.CURVE_ORDER)
     assert not crypto_utils.schnorr_verify(message, public_key, altered)
+
+
+def test_schnorr_sign_is_deterministic():
+    private_key, public_key = crypto_utils.generate_keypair()
+    message = b"deterministic-schnorr"
+    signature1 = crypto_utils.schnorr_sign(message, private_key)
+    signature2 = crypto_utils.schnorr_sign(message, private_key)
+    assert signature1 == signature2
+    assert crypto_utils.schnorr_verify(message, public_key, signature1)
+
+
+def test_schnorr_sign_validates_inputs():
+    private_key, _ = crypto_utils.generate_keypair()
+    with pytest.raises(TypeError):
+        crypto_utils.schnorr_sign("not-bytes", private_key)
+    with pytest.raises(ValueError):
+        crypto_utils.schnorr_sign(b"msg", 0)
+
+
+def test_schnorr_verify_rejects_invalid_inputs():
+    private_key, public_key = crypto_utils.generate_keypair()
+    message = b"invalid-checks"
+    signature = crypto_utils.schnorr_sign(message, private_key)
+    assert not crypto_utils.schnorr_verify("bad", public_key, signature)
+    out_of_range = (signature[0], crypto_utils.CURVE_ORDER)
+    assert not crypto_utils.schnorr_verify(message, public_key, out_of_range)
