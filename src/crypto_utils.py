@@ -11,9 +11,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Tuple
 
-from ecdsa import SECP256k1
+from ecdsa import SECP256k1, rfc6979
 from ecdsa.ellipticcurve import Point, PointJacobi
 
 
@@ -27,6 +27,20 @@ def random_scalar() -> int:
     """Return a cryptographically secure random scalar for the curve."""
 
     return secrets.randbelow(CURVE_ORDER - 1) + 1
+
+
+def is_valid_scalar(value: int) -> bool:
+    """Return ``True`` if *value* is a non-zero scalar within the curve order."""
+
+    return isinstance(value, int) and 1 <= value < CURVE_ORDER
+
+
+def _ensure_bytes(data: object) -> bytes:
+    """Normalise *data* to a ``bytes`` instance."""
+
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    raise TypeError("message must be bytes-like")
 
 
 def scalar_mult(scalar: int, point: Point = G) -> Point:
@@ -179,14 +193,16 @@ def verify_commitment(
 def schnorr_sign(message: bytes, private_key: int) -> Tuple[Point, int]:
     """Return a deterministic Schnorr signature over *message*."""
 
-    if not isinstance(message, (bytes, bytearray)):
-        raise TypeError("message must be bytes-like")
+    message_bytes = _ensure_bytes(message)
+    if not is_valid_scalar(private_key):
+        raise ValueError("private key must be a scalar in the curve order")
 
-    k = random_scalar()
+    message_hash = hashlib.sha256(message_bytes).digest()
+    k = rfc6979.generate_k(CURVE_ORDER, private_key, hashlib.sha256, message_hash)
     r_point = scalar_mult(k, G)
     if hasattr(r_point, "to_affine"):
         r_point = r_point.to_affine()
-    challenge = hash_to_int(point_to_bytes(r_point), message)
+    challenge = hash_to_int(point_to_bytes(r_point), message_bytes)
     s = (k + challenge * private_key) % CURVE_ORDER
     return r_point, s
 
@@ -194,7 +210,9 @@ def schnorr_sign(message: bytes, private_key: int) -> Tuple[Point, int]:
 def schnorr_verify(message: bytes, public_key: Point, signature: Tuple[Point, int]) -> bool:
     """Verify a Schnorr signature produced by :func:`schnorr_sign`."""
 
-    if not isinstance(message, (bytes, bytearray)):
+    try:
+        message_bytes = _ensure_bytes(message)
+    except TypeError:
         return False
 
     try:
@@ -202,10 +220,13 @@ def schnorr_verify(message: bytes, public_key: Point, signature: Tuple[Point, in
     except (TypeError, ValueError):
         return False
 
-    if not isinstance(r_point, (Point, PointJacobi)) or not isinstance(s_value, int):
+    if not isinstance(r_point, (Point, PointJacobi)):
         return False
 
-    challenge = hash_to_int(point_to_bytes(r_point), message)
+    if not is_valid_scalar(s_value):
+        return False
+
+    challenge = hash_to_int(point_to_bytes(r_point), message_bytes)
     left = scalar_mult(s_value, G)
     right = point_add(r_point, scalar_mult(challenge, public_key))
     return left == right
