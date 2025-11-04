@@ -336,6 +336,22 @@ async def relay_tx_local(tx: dict, tid: str):
     await forward_stem(sender=None, tx=tx, tid=tid)
 
 
+def reset_state():
+    """Reset in-memory relay state (used by tests)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    for peer in list(PEERS.values()):
+        if loop and not loop.is_closed():
+            loop.create_task(peer.close())
+    PEERS.clear()
+    SEEN_TX.clear()
+    MEMPOOL.clear()
+    ROUTER.reset()
+
+
 # ------------------------------------------------------------------------------
 # Startup
 # ------------------------------------------------------------------------------
