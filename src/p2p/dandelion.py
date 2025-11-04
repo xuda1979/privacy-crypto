@@ -59,3 +59,7 @@ class DandelionRouter:
         if (time.time() - s.started_at) >= STEM_TIMEOUT_S:
             return True
         return False
+
+    def reset(self) -> None:
+        """Clear all in-flight stem routing state (mainly for tests)."""
+        self._stem.clear()
