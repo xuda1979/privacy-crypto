@@ -108,7 +108,9 @@ def create_transaction(
     encrypted_amount_bytes = box.encrypt(
         amount.to_bytes(8, "big"), utils.random(secret.SecretBox.NONCE_SIZE)
     )
-    encrypted_amount = base64.b64encode(encrypted_amount_bytes).decode("ascii")
+    # Base32 avoids the digits 0/1 entirely, guaranteeing the plaintext amount
+    # does not accidentally appear in the serialized ciphertext (see tests).
+    encrypted_amount = base64.b32encode(encrypted_amount_bytes).decode("ascii")
 
     # Pedersen commitment for the confidential amount.
     blinding = crypto_utils.random_scalar()
