@@ -119,7 +119,7 @@ class Wallet:
         box = secret.SecretBox(shared_secret)
 
         try:
-            ciphertext = base64.b64decode(transaction["encrypted_amount"].encode("ascii"))
+            ciphertext = base64.b32decode(transaction["encrypted_amount"].encode("ascii"))
         except (KeyError, ValueError, TypeError) as exc:  # pragma: no cover - defensive
             raise ValueError("Invalid encrypted amount payload") from exc
 

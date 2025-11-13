@@ -180,9 +180,9 @@ class Blockchain:
         except ValueError:
             return False
 
-        # Ensure the encrypted payload is valid base64
+        # Ensure the encrypted payload is valid base32
         try:
-            base64.b64decode(transaction["encrypted_amount"], validate=True)
+            base64.b32decode(transaction["encrypted_amount"], casefold=True)
         except (TypeError, ValueError):
             return False
 
