@@ -78,6 +78,15 @@ docker compose up --build --scale p2p=4
 
 该 GUI 仅依赖标准库 Tkinter，可在本地运行 `python -m src.wallet_gui` 启动。
 
+### 测试 / 验证
+
+为了确认 GUI 引入后没有破坏既有逻辑，可在本地运行完整的自动化测试并做一次手动 GUI 检查：
+
+```bash
+pytest                       # 覆盖 API、钱包、密码学与 P2P 逻辑
+python -m src.wallet_gui     # 手动验证 GUI 操作流程
+```
+
 ---
 
 ## 3) Using the API & the P2P relay together
