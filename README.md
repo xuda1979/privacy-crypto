@@ -41,6 +41,8 @@ pip install -r requirements.txt
 ./scripts/run_node.sh
 # 另启一个终端：启动 P2P 中继（WebSocket + Dandelion++）
 ./scripts/run_p2p.sh
+# 桌面端钱包 GUI（Tkinter）
+python -m src.wallet_gui
 ```
 环境变量：
 - `HOST` / `PORT`：API 监听（默认 `0.0.0.0:8000`）
@@ -64,6 +66,26 @@ docker compose up --build
 docker compose up --build --scale p2p=4
 ```
 详见 `docs/DEPLOYMENT.md` 与 `scripts/devnet.sh`。
+
+### Wallet GUI 功能
+
+`src/wallet_gui.py` 提供了一个极简 Tkinter 图形界面，帮助测试者无需编写脚本即可：
+
+- 生成新钱包、查看观测/花费密钥与导出的隐匿地址；
+- 根据手工输入的私钥恢复钱包；
+- 粘贴任意隐匿地址以查看解析后的公开密钥；
+- 粘贴交易 JSON，快速检查交易是否属于当前钱包并解密金额。
+
+该 GUI 仅依赖标准库 Tkinter，可在本地运行 `python -m src.wallet_gui` 启动。
+
+### 测试 / 验证
+
+为了确认 GUI 引入后没有破坏既有逻辑，可在本地运行完整的自动化测试并做一次手动 GUI 检查：
+
+```bash
+pytest                       # 覆盖 API、钱包、密码学与 P2P 逻辑
+python -m src.wallet_gui     # 手动验证 GUI 操作流程
+```
 
 ---
 
