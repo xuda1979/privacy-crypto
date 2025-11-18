@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .blockchain import Blockchain
+from .dex import Dex, PRIVACY_COIN_SYMBOL
 from .main import create_transaction
 from .wallet import Wallet
 
@@ -18,6 +19,7 @@ app = FastAPI(title="Privacy Crypto Demo", version="1.0.0")
 _blockchain = Blockchain()
 _wallet_store: Dict[str, Wallet] = {}
 _rng = random.SystemRandom()
+_dex = Dex()
 
 
 class WalletSummary(BaseModel):
@@ -52,6 +54,66 @@ class MineResponse(BaseModel):
     block_index: int
     hash: str
     transactions: List[Dict[str, Any]]
+
+
+class DexPoolCreateRequest(BaseModel):
+    other_asset: str = Field(min_length=2, max_length=16)
+    privacy_amount: int = Field(gt=0)
+    other_amount: int = Field(gt=0)
+    fee_bps: int = Field(default=30, ge=0, lt=10_000)
+
+
+class DexPoolResponse(BaseModel):
+    pool_id: str
+    other_asset: str
+    privacy_reserve: int
+    other_reserve: int
+    fee_bps: int
+    total_shares: int
+
+
+class DexLiquidityRequest(BaseModel):
+    provider_id: str = Field(min_length=1, max_length=64)
+    privacy_amount: int = Field(gt=0)
+    other_amount: int = Field(gt=0)
+
+
+class DexLiquidityResponse(BaseModel):
+    minted_shares: int
+    total_shares: int
+
+
+class DexWithdrawRequest(BaseModel):
+    provider_id: str = Field(min_length=1, max_length=64)
+    share_amount: int = Field(gt=0)
+
+
+class DexWithdrawResponse(BaseModel):
+    privacy_withdrawn: int
+    other_withdrawn: int
+    total_shares: int
+
+
+class DexSwapRequest(BaseModel):
+    pool_id: str
+    input_asset: str
+    input_amount: int = Field(gt=0)
+    min_output_amount: int | None = Field(default=None, ge=0)
+
+
+class DexSwapResponse(BaseModel):
+    pool_id: str
+    input_asset: str
+    output_asset: str
+    input_amount: int
+    output_amount: int
+    fee_bps: int
+
+
+class DexQuoteRequest(BaseModel):
+    pool_id: str
+    input_asset: str
+    input_amount: int = Field(gt=0)
 
 
 def _format_wallet(wallet_id: str, wallet: Wallet) -> WalletSummary:
@@ -160,7 +222,76 @@ def reset_state() -> None:
     _wallet_store.clear()
     global _blockchain
     _blockchain = Blockchain()
+    global _dex
+    _dex = Dex()
 
 
 __all__ = ["app", "reset_state"]
+
+
+@app.post("/dex/pools", response_model=DexPoolResponse)
+def create_dex_pool(payload: DexPoolCreateRequest) -> DexPoolResponse:
+    try:
+        pool = _dex.create_pool(
+            payload.other_asset,
+            payload.privacy_amount,
+            payload.other_amount,
+            fee_bps=payload.fee_bps,
+            provider_id="api",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DexPoolResponse(**pool.as_dict())
+
+
+@app.get("/dex/pools", response_model=List[DexPoolResponse])
+def list_dex_pools() -> List[DexPoolResponse]:
+    return [DexPoolResponse(**pool) for pool in _dex.list_pools()]
+
+
+@app.post("/dex/pools/{pool_id}/liquidity", response_model=DexLiquidityResponse)
+def add_liquidity(pool_id: str, payload: DexLiquidityRequest) -> DexLiquidityResponse:
+    try:
+        result = _dex.provide_liquidity(
+            pool_id,
+            payload.provider_id,
+            payload.privacy_amount,
+            payload.other_amount,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DexLiquidityResponse(**result)
+
+
+@app.post("/dex/pools/{pool_id}/withdraw", response_model=DexWithdrawResponse)
+def withdraw_liquidity(pool_id: str, payload: DexWithdrawRequest) -> DexWithdrawResponse:
+    try:
+        result = _dex.withdraw_liquidity(pool_id, payload.provider_id, payload.share_amount)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DexWithdrawResponse(**result)
+
+
+@app.post("/dex/swap", response_model=DexSwapResponse)
+def swap_assets(payload: DexSwapRequest) -> DexSwapResponse:
+    min_output = payload.min_output_amount
+    try:
+        result = _dex.execute_swap(
+            payload.pool_id,
+            payload.input_asset,
+            payload.input_amount,
+            min_output_amount=min_output,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DexSwapResponse(**result)
+
+
+@app.post("/dex/quote", response_model=DexSwapResponse)
+def quote_swap(payload: DexQuoteRequest) -> DexSwapResponse:
+    try:
+        result = _dex.quote_swap(payload.pool_id, payload.input_asset, payload.input_amount)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DexSwapResponse(**result)
 
