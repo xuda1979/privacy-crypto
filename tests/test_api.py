@@ -63,3 +63,41 @@ def test_transaction_requires_sufficient_decoys():
     )
     assert response.status_code == 400
     assert "ring" in response.json()["detail"].lower()
+
+
+def test_dex_endpoints_allow_swaps():
+    client = TestClient(app)
+    pool = client.post(
+        "/dex/pools",
+        json={"other_asset": "ETH", "privacy_amount": 1_000_000, "other_amount": 500_000, "fee_bps": 35},
+    )
+    assert pool.status_code == 200
+    pool_id = pool.json()["pool_id"]
+
+    add = client.post(
+        f"/dex/pools/{pool_id}/liquidity",
+        json={"provider_id": "alice", "privacy_amount": 200_000, "other_amount": 100_000},
+    )
+    assert add.status_code == 200
+    minted = add.json()["minted_shares"]
+    assert minted > 0
+
+    quote = client.post(
+        "/dex/quote",
+        json={"pool_id": pool_id, "input_asset": "PRV", "input_amount": 50_000},
+    ).json()
+    assert quote["output_amount"] > 0
+
+    swap = client.post(
+        "/dex/swap",
+        json={"pool_id": pool_id, "input_asset": "PRV", "input_amount": 50_000, "min_output_amount": 1},
+    )
+    assert swap.status_code == 200
+    swap_body = swap.json()
+    assert swap_body["output_amount"] == quote["output_amount"]
+
+    withdraw = client.post(
+        f"/dex/pools/{pool_id}/withdraw",
+        json={"provider_id": "alice", "share_amount": add.json()["minted_shares"]},
+    )
+    assert withdraw.status_code == 200

@@ -4,11 +4,12 @@
 
 > ✅ **What’s new in this PR**
 >
-> - 新增 **去中心化 P2P 中继层**（基于 FastAPI WebSocket）并实现 **Dandelion++** 传播，显著降低交易源头暴露与定向阻断的可能性  
-> - **抗资产冻结/阻断**：协议层完全基于密码学验证，无“冻结密钥/黑名单”入口；中继层只按有效性与费率收录，不区分地址  
-> - **效率**：引入 `orjson`（自动回退到 `json`）、轻量级 **紧凑编码**（varint）、去重与 TTL 驱动的 mempool；可选 `uvloop`  
-> - **易部署**：新增 `Dockerfile`、`docker-compose.yml`、`scripts/devnet.sh` 一键本地多节点网络；提供 `docs/DEPLOYMENT.md`  
+> - 新增 **去中心化 P2P 中继层**（基于 FastAPI WebSocket）并实现 **Dandelion++** 传播，显著降低交易源头暴露与定向阻断的可能性
+> - **抗资产冻结/阻断**：协议层完全基于密码学验证，无“冻结密钥/黑名单”入口；中继层只按有效性与费率收录，不区分地址
+> - **效率**：引入 `orjson`（自动回退到 `json`）、轻量级 **紧凑编码**（varint）、去重与 TTL 驱动的 mempool；可选 `uvloop`
+> - **易部署**：新增 `Dockerfile`、`docker-compose.yml`、`scripts/devnet.sh` 一键本地多节点网络；提供 `docs/DEPLOYMENT.md`
 > - **文档**：补充 `docs/PRIVACY.md`、`docs/INNOVATIONS.md`，并在本 README 汇总设计与隐私原理
+> - **跨链互换**：新增内置 **DEX 恒定乘积做市模块** 与 FastAPI 端点，支持 PRV 与外部资产（ETH/USDC/BTC 等符号）之间进行报价、兑换、增/减流动性
 
 ---
 
@@ -77,6 +78,21 @@ docker compose up --build --scale p2p=4
 - 粘贴交易 JSON，快速检查交易是否属于当前钱包并解密金额。
 
 该 GUI 仅依赖标准库 Tkinter，可在本地运行 `python -m src.wallet_gui` 启动。
+
+### 内置 DEX（恒定乘积 AMM）
+
+`/dex/*` API 端点暴露了一个最小可用的做市系统，帮助开发者在演示网络中直接把 PRV 与其它资产进行互换：
+
+| Endpoint | 功能 |
+| --- | --- |
+| `POST /dex/pools` | 创建 `PRV-<ASSET>` 交易池，需同时提供初始 PRV/外部资产储备，可指定费率（基点） |
+| `GET /dex/pools` | 查看所有池子的储备、费率与 LP 份额 |
+| `POST /dex/pools/{pool_id}/liquidity` | 为池子增加流动性，提交者需提供 Provider ID 以及与当前储备同样比例的资金 |
+| `POST /dex/pools/{pool_id}/withdraw` | 赎回指定的 LP 份额，系统会按占比返还 PRV 与外部资产 |
+| `POST /dex/quote` | 获取任意池子的即时报价（不会修改储备） |
+| `POST /dex/swap` | 实际执行兑换，支持可选 `min_output_amount` 以控制滑点 |
+
+做市逻辑位于 `src/dex.py`，实现了恒定乘积 `x*y=k` 定价与 LP 份额会计；测试文件 `tests/test_dex.py` 覆盖池子创建、流动性进出与兑换流程。
 
 ### 测试 / 验证
 
