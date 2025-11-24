@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
+import os
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
 from ecdsa.ellipticcurve import Point
-from nacl import secret
+from nacl import pwhash, secret, utils
+from nacl.exceptions import CryptoError
 
 from . import crypto_utils
 from .utils.serialization import canonical_hash
@@ -26,6 +29,68 @@ class Wallet:
         view_private, _ = crypto_utils.generate_keypair()
         spend_private, _ = crypto_utils.generate_keypair()
         return cls(view_private, spend_private)
+
+    def save_to_file(self, filename: str, password: str) -> None:
+        """Encrypt and save wallet keys to *filename* using *password*."""
+
+        salt = utils.random(pwhash.argon2i.SALTBYTES)
+        key = pwhash.argon2i.kdf(
+            secret.SecretBox.KEY_SIZE,
+            password.encode("utf-8"),
+            salt,
+            opslimit=pwhash.argon2i.OPSLIMIT_SENSITIVE,
+            memlimit=pwhash.argon2i.MEMLIMIT_SENSITIVE,
+        )
+        box = secret.SecretBox(key)
+
+        payload = json.dumps(
+            {"view": self.view_private_key, "spend": self.spend_private_key}
+        ).encode("utf-8")
+
+        nonce = utils.random(secret.SecretBox.NONCE_SIZE)
+        encrypted = box.encrypt(payload, nonce)
+
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "version": 1,
+                    "salt": base64.b64encode(salt).decode("ascii"),
+                    "data": base64.b64encode(encrypted).decode("ascii"),
+                },
+                f,
+            )
+
+    @classmethod
+    def load_from_file(cls, filename: str, password: str) -> "Wallet":
+        """Load and decrypt wallet from *filename* using *password*."""
+
+        if not os.path.exists(filename):
+            raise ValueError("Wallet file not found")
+
+        with open(filename, "r", encoding="utf-8") as f:
+            blob = json.load(f)
+
+        try:
+            salt = base64.b64decode(blob["salt"])
+            encrypted_data = base64.b64decode(blob["data"])
+        except (KeyError, ValueError, binascii.Error) as exc:
+            raise ValueError("Malformed wallet file") from exc
+
+        key = pwhash.argon2i.kdf(
+            secret.SecretBox.KEY_SIZE,
+            password.encode("utf-8"),
+            salt,
+            opslimit=pwhash.argon2i.OPSLIMIT_SENSITIVE,
+            memlimit=pwhash.argon2i.MEMLIMIT_SENSITIVE,
+        )
+        box = secret.SecretBox(key)
+
+        try:
+            plaintext = box.decrypt(encrypted_data)
+            keys = json.loads(plaintext)
+            return cls(keys["view"], keys["spend"])
+        except (CryptoError, KeyError, ValueError) as exc:
+            raise ValueError("Invalid password or corrupt wallet file") from exc
 
     @property
     def view_public_key(self) -> Point:
