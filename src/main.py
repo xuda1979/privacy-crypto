@@ -171,6 +171,58 @@ def create_transaction(
     return tx
 
 
+def create_coinbase_transaction(
+    recipient: Wallet,
+    amount: int,
+    memo: str | None = "Mining Reward"
+) -> Transaction:
+    """Construct a coinbase transaction (minting new coins) for a miner."""
+
+    ephemeral_scalar, ephemeral_public, stealth_public = crypto_utils.derive_stealth_address(
+        recipient.view_public_key, recipient.spend_public_key
+    )
+
+    shared_secret = crypto_utils.derive_shared_secret(
+        ephemeral_scalar, recipient.view_public_key
+    )
+    box = secret.SecretBox(shared_secret)
+    encrypted_amount_bytes = box.encrypt(
+        amount.to_bytes(8, "big"), utils.random(secret.SecretBox.NONCE_SIZE)
+    )
+    encrypted_amount = base64.b32encode(encrypted_amount_bytes).decode("ascii")
+
+    blinding = crypto_utils.random_scalar()
+    commitment = crypto_utils.pedersen_commit(amount, blinding)
+    proof_point, s1, s2 = crypto_utils.prove_commitment(amount, blinding)
+
+    commitment_dict = {
+        "commitment": _encode_point(commitment),
+        "t": _encode_point(proof_point),
+        "s1": _encode_scalar(s1),
+        "s2": _encode_scalar(s2),
+    }
+
+    from .blockchain import COINBASE_KEY_IMAGE
+
+    key_image = COINBASE_KEY_IMAGE
+    ring_serialized: list[str] = []
+    ring_signature_payload: dict[str, str] = {}
+
+    tx = Transaction(
+        ring_public_keys=ring_serialized,
+        key_image=key_image,
+        stealth_address=_encode_point(stealth_public),
+        ephemeral_public_key=_encode_point(ephemeral_public),
+        encrypted_amount=encrypted_amount,
+        amount_commitment=commitment_dict["commitment"],
+        commitment_proof=commitment_dict,
+        ring_signature=ring_signature_payload,
+        memo=memo,
+    )
+
+    return tx
+
+
 def main() -> None:  # pragma: no cover - demonstration helper
     sender = Wallet.generate()
     recipient = Wallet.generate()

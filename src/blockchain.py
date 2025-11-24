@@ -6,12 +6,26 @@ import base64
 import hashlib
 import json
 import time
-from dataclasses import dataclass
+import os
+from dataclasses import asdict, dataclass
 from typing import Dict, List
 
 from . import crypto_utils, ring_signature
+from .main import create_coinbase_transaction
+from .wallet import Wallet
 from .utils.serialization import canonical_hash
+from .utils.merkle import compute_merkle_root
 
+
+TOTAL_SUPPLY = 21_000_000
+PREMINE_PERCENT = 0.15
+BLOCK_REWARD = 10
+COINBASE_KEY_IMAGE = "00" * 33
+
+TARGET_BLOCK_TIME = 60
+DIFFICULTY_ADJUSTMENT_INTERVAL = 10
+MAX_BLOCK_TXS = 50
+DB_FILE = "blockchain_data.json"
 
 def compute_hash(block: "Block") -> str:
     """Compute the SHA-256 hash of a block's immutable fields."""
@@ -19,10 +33,11 @@ def compute_hash(block: "Block") -> str:
     block_dict = {
         "index": block.index,
         "timestamp": block.timestamp,
-        "transactions": block.transactions,
+        "merkle_root": block.merkle_root,
         "previous_hash": block.previous_hash,
         "nonce": block.nonce,
     }
+    # Hash only the block header, not the full transaction bodies
     serialized = json.dumps(block_dict, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
@@ -35,6 +50,11 @@ class Block:
     previous_hash: str
     nonce: int = 0
     hash: str = ""
+    merkle_root: str = ""
+
+    def __post_init__(self):
+        if not self.merkle_root:
+            self.merkle_root = compute_merkle_root(self.transactions)
 
 
 def _decode_point(value: str):
@@ -65,18 +85,64 @@ def _normalised_transaction_payload(transaction: Dict[str, object]) -> Dict[str,
 class Blockchain:
     """Proof-of-work blockchain with privacy-aware transaction validation."""
 
-    difficulty: int = 4
+    difficulty: int = 2
 
-    def __init__(self) -> None:
-        self.chain: List[Block] = [self._create_genesis_block()]
+    def __init__(self, dev_wallet: Wallet | None = None) -> None:
+        self.chain: List[Block] = []
         self.pending_transactions: List[Dict[str, object]] = []
         self.spent_key_images: set[str] = set()
         self.seen_transactions: set[str] = set()
 
-    def _create_genesis_block(self) -> Block:
-        block = Block(index=0, timestamp=time.time(), transactions=[], previous_hash="0" * 64)
+        if os.path.exists(DB_FILE):
+            self._load_chain()
+        else:
+            self.chain = [self._create_genesis_block(dev_wallet)]
+            self._save_chain()
+
+    def _create_genesis_block(self, dev_wallet: Wallet | None) -> Block:
+        transactions = []
+        if dev_wallet:
+            premine_amount = int(TOTAL_SUPPLY * PREMINE_PERCENT)
+            tx = create_coinbase_transaction(dev_wallet, premine_amount, memo="Genesis Pre-mine")
+            transactions.append(tx.to_dict())
+
+        block = Block(index=0, timestamp=time.time(), transactions=transactions, previous_hash="0" * 64)
         block = self._mine_block(block)
         return block
+
+    def _adjust_difficulty(self) -> None:
+        if len(self.chain) % DIFFICULTY_ADJUSTMENT_INTERVAL != 0:
+            return
+
+        start_block = self.chain[-DIFFICULTY_ADJUSTMENT_INTERVAL]
+        end_block = self.chain[-1]
+
+        time_taken = end_block.timestamp - start_block.timestamp
+        expected_time = TARGET_BLOCK_TIME * DIFFICULTY_ADJUSTMENT_INTERVAL
+
+        if time_taken < expected_time / 2:
+            self.difficulty += 1
+            print(f"[consensus] Mining too fast. Increased difficulty to {self.difficulty}")
+        elif time_taken > expected_time * 2:
+            self.difficulty = max(1, self.difficulty - 1)
+            print(f"[consensus] Mining too slow. Decreased difficulty to {self.difficulty}")
+
+    def _save_chain(self) -> None:
+        with open(DB_FILE, "w") as f:
+            data = [asdict(b) for b in self.chain]
+            json.dump(data, f, indent=2)
+
+    def _load_chain(self) -> None:
+        print(f"[storage] Loading blockchain from {DB_FILE}...")
+        with open(DB_FILE, "r") as f:
+            data = json.load(f)
+            self.chain = [Block(**item) for item in data]
+            for block in self.chain:
+                for tx in block.transactions:
+                    if tx.get("key_image") and tx["key_image"] != COINBASE_KEY_IMAGE:
+                        self.spent_key_images.add(tx["key_image"])
+                        self.seen_transactions.add(tx.get("tx_id"))
+            self._adjust_difficulty()
 
     def _mine_block(self, block: Block) -> Block:
         while True:
@@ -110,6 +176,13 @@ class Blockchain:
         }
         if not required_fields.issubset(transaction):
             return False
+
+        is_coinbase = transaction["key_image"] == COINBASE_KEY_IMAGE
+
+        if is_coinbase:
+            if len(transaction["ring_public_keys"]) != 0:
+                return False
+            return True
 
         if not isinstance(transaction.get("ring_public_keys"), list):
             return False
@@ -192,9 +265,9 @@ class Blockchain:
         except (TypeError, ValueError):
             return False
         now = time.time()
-        if timestamp > now + 5 * 60:
+        if timestamp > now + 2 * 60 * 60:
             return False
-        if timestamp < now - 24 * 60 * 60:
+        if timestamp < now - 7 * 24 * 60 * 60:
             return False
 
         # When a transaction id is present ensure it commits to the canonical payload
@@ -208,31 +281,46 @@ class Blockchain:
 
         return True
 
-    def mine_block(self) -> Block:
-        if not self.pending_transactions:
-            raise ValueError("No pending transactions to mine")
+    def mine_block(self, miner_wallet: Wallet = None) -> Block:
+        max_txs = MAX_BLOCK_TXS - 1
+        transactions_to_mine = self.pending_transactions[:max_txs]
+
+        if miner_wallet:
+            coinbase_tx = create_coinbase_transaction(miner_wallet, amount=BLOCK_REWARD)
+            transactions_to_mine.insert(0, coinbase_tx.to_dict())
 
         new_block = Block(
             index=len(self.chain),
             timestamp=time.time(),
-            transactions=self.pending_transactions.copy(),
+            transactions=transactions_to_mine,
             previous_hash=self.chain[-1].hash,
         )
+        # Block post-init will compute the merkle_root
         new_block = self._mine_block(new_block)
         if not self._validate_block(new_block, self.chain[-1]):
             raise ValueError("New block failed validation")
         self.chain.append(new_block)
         for transaction in new_block.transactions:
-            self.spent_key_images.add(transaction["key_image"])
-        self.pending_transactions = []
+            if transaction["key_image"] != COINBASE_KEY_IMAGE:
+                self.spent_key_images.add(transaction["key_image"])
+
+        self.pending_transactions = self.pending_transactions[max_txs:]
+        self._adjust_difficulty()
+        self._save_chain()
+
         return new_block
 
     def _validate_block(self, block: Block, previous_block: Block) -> bool:
         if block.previous_hash != previous_block.hash:
             return False
+        calculated_root = compute_merkle_root(block.transactions)
+        if block.merkle_root != calculated_root:
+            return False
         if compute_hash(block) != block.hash:
             return False
         if not block.hash.startswith("0" * self.difficulty):
+            return False
+        if block.timestamp <= previous_block.timestamp:
             return False
         for transaction in block.transactions:
             if not self.validate_transaction(transaction):

@@ -16,10 +16,19 @@ from .wallet import Wallet
 
 app = FastAPI(title="Privacy Crypto Demo", version="1.0.0")
 
-_blockchain = Blockchain()
 _wallet_store: Dict[str, Wallet] = {}
 _rng = random.SystemRandom()
 _dex = Dex()
+
+# Initialize Blockchain with a Dev Wallet for the pre-mine
+print("--- GENESIS INITIALIZATION ---")
+_dev_wallet = Wallet.generate()
+print("DEV WALLET (15% PRE-MINE) KEYS:")
+print(f"  View Private:  {_dev_wallet.view_private_key}")
+print(f"  Spend Private: {_dev_wallet.spend_private_key}")
+print(f"  Address:       {_dev_wallet.export_address()}")
+print("------------------------------")
+_blockchain = Blockchain(dev_wallet=_dev_wallet)
 
 
 class WalletSummary(BaseModel):
@@ -190,8 +199,17 @@ def submit_transaction(payload: TransactionRequest) -> TransactionResponse:
 def mine_block() -> MineResponse:
     """Mine the current pending transactions into a new block."""
 
+    # In a real node, the miner uses their own wallet.
+    # For this demo, we use a 'miner' wallet stored locally or generate one.
+    miner_id = "miner_wallet"
+    if miner_id not in _wallet_store:
+        _wallet_store[miner_id] = Wallet.generate()
+
+    miner_wallet = _wallet_store[miner_id]
+
     try:
-        block = _blockchain.mine_block()
+        # Mine block and credit reward to the miner_wallet
+        block = _blockchain.mine_block(miner_wallet=miner_wallet)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -221,7 +239,10 @@ def reset_state() -> None:
 
     _wallet_store.clear()
     global _blockchain
-    _blockchain = Blockchain()
+    import os
+    if os.path.exists("blockchain_data.json"):
+        os.remove("blockchain_data.json")
+    _blockchain = Blockchain(dev_wallet=Wallet.generate())
     global _dex
     _dex = Dex()
 
