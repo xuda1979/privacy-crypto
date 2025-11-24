@@ -182,6 +182,44 @@ class Blockchain:
         if is_coinbase:
             if len(transaction["ring_public_keys"]) != 0:
                 return False
+            if transaction.get("ring_signature") not in ({}, None):
+                return False
+
+            try:
+                commitment_proof = transaction["commitment_proof"]
+                commitment_point = _decode_point(commitment_proof["commitment"])
+                proof_point = _decode_point(commitment_proof["t"])
+                s1 = _decode_scalar(commitment_proof["s1"])
+                s2 = _decode_scalar(commitment_proof["s2"])
+            except (KeyError, ValueError):
+                return False
+
+            if transaction.get("amount_commitment") != commitment_proof.get("commitment"):
+                return False
+
+            try:
+                _decode_point(transaction["amount_commitment"])
+            except (TypeError, ValueError):
+                return False
+
+            if not crypto_utils.verify_commitment(commitment_point, proof_point, s1, s2):
+                return False
+
+            try:
+                base64.b32decode(transaction["encrypted_amount"], casefold=True)
+            except (TypeError, ValueError):
+                return False
+
+            try:
+                timestamp = float(transaction["timestamp"])
+            except (TypeError, ValueError):
+                return False
+            now = time.time()
+            if timestamp > now + 2 * 60 * 60:
+                return False
+            if timestamp < now - 7 * 24 * 60 * 60:
+                return False
+
             return True
 
         if not isinstance(transaction.get("ring_public_keys"), list):
