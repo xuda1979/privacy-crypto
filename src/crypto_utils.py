@@ -15,6 +15,7 @@ from typing import Dict, Tuple
 
 from ecdsa import SECP256k1, rfc6979
 from ecdsa.ellipticcurve import Point, PointJacobi
+from pybip39 import Mnemonic, Seed
 
 
 CURVE = SECP256k1
@@ -129,6 +130,18 @@ def hash_to_point(label: bytes) -> Point:
 
 
 H = hash_to_point(b"privacy-crypto-secondary-generator")
+
+
+def generate_mnemonic() -> str:
+    """Generate a 12-word mnemonic phrase."""
+    return Mnemonic().phrase
+
+
+def keys_from_mnemonic(mnemonic_phrase: str, passphrase: str = "") -> int:
+    """Derive a private key from a mnemonic phrase."""
+    seed = Seed(Mnemonic.from_phrase(mnemonic_phrase), passphrase)
+    key = bytes_to_int(bytes(seed))
+    return (key % (CURVE_ORDER - 1)) + 1
 
 
 def generate_keypair() -> Tuple[int, Point]:

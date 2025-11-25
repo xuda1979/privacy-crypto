@@ -33,6 +33,7 @@ class WalletGUI:
 
         self.view_private_entry: ttk.Entry | None = None
         self.spend_private_entry: ttk.Entry | None = None
+        self.mnemonic_entry: ttk.Entry | None = None
         self.transaction_text: scrolledtext.ScrolledText | None = None
         self.address_entry: ttk.Entry | None = None
 
@@ -80,8 +81,17 @@ class WalletGUI:
             column=0, row=2, columnspan=2, sticky="ew", pady=(8, 0)
         )
 
+        mnemonic_frame = ttk.LabelFrame(main, text="Restore from mnemonic", padding=12)
+        mnemonic_frame.grid(column=0, row=3, sticky="ew", pady=(12, 0))
+        self.mnemonic_entry = self._add_simple_entry(
+            mnemonic_frame, "Mnemonic", 0, placeholder="12 word phrase"
+        )
+        ttk.Button(
+            mnemonic_frame, text="Restore", command=self.restore_from_mnemonic
+        ).grid(column=0, row=1, columnspan=2, sticky="ew", pady=(8, 0))
+
         address_frame = ttk.LabelFrame(main, text="Inspect address", padding=12)
-        address_frame.grid(column=0, row=3, sticky="ew", pady=(12, 0))
+        address_frame.grid(column=0, row=4, sticky="ew", pady=(12, 0))
         ttk.Label(address_frame, text="Address").grid(column=0, row=0, sticky="w")
         self.address_entry = ttk.Entry(address_frame, width=80)
         self.address_entry.grid(column=1, row=0, sticky="ew")
@@ -91,7 +101,7 @@ class WalletGUI:
         address_frame.columnconfigure(1, weight=1)
 
         tx_frame = ttk.LabelFrame(main, text="Transaction tools", padding=12)
-        tx_frame.grid(column=0, row=4, sticky="nsew", pady=(12, 0))
+        tx_frame.grid(column=0, row=5, sticky="nsew", pady=(12, 0))
         self.transaction_text = scrolledtext.ScrolledText(tx_frame, height=10, width=80)
         self.transaction_text.grid(column=0, row=0, columnspan=2, sticky="nsew")
         tx_frame.columnconfigure(0, weight=1)
@@ -104,7 +114,7 @@ class WalletGUI:
             tx_frame, text="Decrypt amount", command=self.decrypt_amount
         ).grid(column=1, row=1, sticky="ew", pady=(8, 0), padx=(8, 0))
 
-        main.rowconfigure(4, weight=1)
+        main.rowconfigure(5, weight=1)
 
     def _add_labeled_entry(self, master, label, variable, row):
         ttk.Label(master, text=label).grid(column=0, row=row, sticky="w")
@@ -125,9 +135,13 @@ class WalletGUI:
     # ------------------------------------------------------------------
     # Wallet operations
     def generate_wallet(self) -> None:
-        self.wallet = Wallet.generate()
+        self.wallet, mnemonic = Wallet.generate()
         self._update_wallet_fields()
-        messagebox.showinfo("Wallet", "Generated a fresh wallet")
+        messagebox.showinfo(
+            "Wallet",
+            "Generated a fresh wallet. Please store this mnemonic phrase securely:\n\n"
+            + mnemonic,
+        )
 
     def restore_from_inputs(self) -> None:
         if not self.view_private_entry or not self.spend_private_entry:
@@ -146,6 +160,24 @@ class WalletGUI:
         self.wallet = Wallet(view_key, spend_key)
         self._update_wallet_fields()
         messagebox.showinfo("Restore", "Wallet restored from provided keys")
+
+    def restore_from_mnemonic(self) -> None:
+        if not self.mnemonic_entry:
+            return
+        mnemonic = self.mnemonic_entry.get().strip()
+        if not mnemonic:
+            messagebox.showerror("Restore", "Please enter a mnemonic phrase")
+            return
+        try:
+            view_key = crypto_utils.keys_from_mnemonic(mnemonic)
+            spend_key = crypto_utils.keys_from_mnemonic(mnemonic, passphrase="spend")
+        except ValueError:
+            messagebox.showerror("Restore", "Invalid mnemonic phrase")
+            return
+
+        self.wallet = Wallet(view_key, spend_key)
+        self._update_wallet_fields()
+        messagebox.showinfo("Restore", "Wallet restored from mnemonic phrase")
 
     def _update_wallet_fields(self) -> None:
         if not self.wallet:
