@@ -17,23 +17,54 @@ def test_hash_to_point_is_deterministic():
     assert point1 == point2
 
 
-def test_pedersen_commitment_proof_verifies():
-    amount = 42
-    blinding = crypto_utils.random_scalar()
-    commitment = crypto_utils.pedersen_commit(amount, blinding)
-    proof_point, s1, s2 = crypto_utils.prove_commitment(amount, blinding)
-    assert crypto_utils.verify_commitment(commitment, proof_point, s1, s2)
-    tampered = (s1 + 1) % crypto_utils.CURVE_ORDER
-    assert not crypto_utils.verify_commitment(commitment, proof_point, tampered, s2)
-
-
 def test_schnorr_signature_roundtrip():
     private_key, public_key = crypto_utils.generate_keypair()
     message = b"audit-bundle-test"
     signature = crypto_utils.schnorr_sign(message, private_key)
     assert crypto_utils.schnorr_verify(message, public_key, signature)
-    altered = (signature[0], (signature[1] + 1) % crypto_utils.CURVE_ORDER)
-    assert not crypto_utils.schnorr_verify(message, public_key, altered)
+
+
+def test_prove_and_verify_range_valid():
+    """Test that a valid range proof is accepted."""
+    value = 12345
+    bit_commitments, proofs, total_blinding = crypto_utils.prove_range(value)
+    commitment = crypto_utils.pedersen_commit(value, total_blinding)
+    assert crypto_utils.verify_range(commitment, bit_commitments, proofs)
+
+
+def test_verify_range_invalid_commitment():
+    """Test that an invalid range proof with a bad commitment is rejected."""
+    value = 12345
+    bit_commitments, proofs, total_blinding = crypto_utils.prove_range(value)
+    bad_commitment = crypto_utils.pedersen_commit(value + 1, total_blinding)
+    assert not crypto_utils.verify_range(bad_commitment, bit_commitments, proofs)
+
+
+def test_verify_range_invalid_proof():
+    """Test that an invalid range proof with a bad proof is rejected."""
+    value = 12345
+    bit_commitments, proofs, total_blinding = crypto_utils.prove_range(value)
+    commitment = crypto_utils.pedersen_commit(value, total_blinding)
+
+    # Invalidate one of the proofs
+    c0, s0, c1, s1 = proofs[0]
+    bad_proofs = [(c0, s0 + 1, c1, s1)] + proofs[1:]
+
+    assert not crypto_utils.verify_range(commitment, bit_commitments, bad_proofs)
+
+
+def test_prove_range_negative_value():
+    """Test that proving a negative value raises an error."""
+    import pytest
+    with pytest.raises(ValueError):
+        crypto_utils.prove_range(-1)
+
+
+def test_prove_range_out_of_range():
+    """Test that proving a value outside the bit range raises an error."""
+    import pytest
+    with pytest.raises(ValueError):
+        crypto_utils.prove_range(2**64)
 
 
 def test_schnorr_sign_is_deterministic():

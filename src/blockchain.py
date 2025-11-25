@@ -188,21 +188,15 @@ class Blockchain:
             try:
                 commitment_proof = transaction["commitment_proof"]
                 commitment_point = _decode_point(commitment_proof["commitment"])
-                proof_point = _decode_point(commitment_proof["t"])
-                s1 = _decode_scalar(commitment_proof["s1"])
-                s2 = _decode_scalar(commitment_proof["s2"])
+                bit_commitments = [_decode_point(p) for p in commitment_proof["bit_commitments"]]
+                proofs = commitment_proof["proofs"]
             except (KeyError, ValueError):
                 return False
 
             if transaction.get("amount_commitment") != commitment_proof.get("commitment"):
                 return False
 
-            try:
-                _decode_point(transaction["amount_commitment"])
-            except (TypeError, ValueError):
-                return False
-
-            if not crypto_utils.verify_commitment(commitment_point, proof_point, s1, s2):
+            if not crypto_utils.verify_range(commitment_point, bit_commitments, proofs):
                 return False
 
             try:
@@ -230,21 +224,15 @@ class Blockchain:
         try:
             commitment_proof = transaction["commitment_proof"]
             commitment_point = _decode_point(commitment_proof["commitment"])
-            proof_point = _decode_point(commitment_proof["t"])
-            s1 = _decode_scalar(commitment_proof["s1"])
-            s2 = _decode_scalar(commitment_proof["s2"])
+            bit_commitments = [_decode_point(p) for p in commitment_proof["bit_commitments"]]
+            proofs = commitment_proof["proofs"]
         except (KeyError, ValueError):
             return False
 
         if transaction.get("amount_commitment") != commitment_proof.get("commitment"):
             return False
 
-        try:
-            _decode_point(transaction["amount_commitment"])
-        except (TypeError, ValueError):
-            return False
-
-        if not crypto_utils.verify_commitment(commitment_point, proof_point, s1, s2):
+        if not crypto_utils.verify_range(commitment_point, bit_commitments, proofs):
             return False
 
         try:

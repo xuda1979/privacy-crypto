@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-from typing import Dict, Tuple
+from typing import Dict, Iterable, Tuple
 
 from ecdsa import SECP256k1, rfc6979
 from ecdsa.ellipticcurve import Point, PointJacobi
@@ -179,28 +179,7 @@ def pedersen_commit(amount: int, blinding: int) -> Point:
     return point_add(scalar_mult(blinding, G), scalar_mult(amount, H))
 
 
-def prove_commitment(amount: int, blinding: int) -> Tuple[Point, int, int]:
-    """Produce a Schnorr-style proof of knowledge for the commitment."""
-
-    commitment = pedersen_commit(amount, blinding)
-    r1 = random_scalar()
-    r2 = random_scalar()
-    t = point_add(scalar_mult(r1, G), scalar_mult(r2, H))
-    challenge = hash_to_int(point_to_bytes(commitment), point_to_bytes(t))
-    s1 = (r1 + challenge * blinding) % CURVE_ORDER
-    s2 = (r2 + challenge * amount) % CURVE_ORDER
-    return t, s1, s2
-
-
-def verify_commitment(
-    commitment: Point, t: Point, s1: int, s2: int
-) -> bool:
-    """Verify the Schnorr-style proof returned by :func:`prove_commitment`."""
-
-    challenge = hash_to_int(point_to_bytes(commitment), point_to_bytes(t))
-    left = point_add(scalar_mult(s1, G), scalar_mult(s2, H))
-    right = point_add(t, scalar_mult(challenge, commitment))
-    return left == right
+from src.rangeproof import prove_range, verify_range
 
 
 def schnorr_sign(message: bytes, private_key: int) -> Tuple[Point, int]:
