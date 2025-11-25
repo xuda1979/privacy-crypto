@@ -10,7 +10,7 @@ from src.wallet import Wallet, verify_audit_bundle
 
 
 def test_wallet_address_roundtrip():
-    wallet = Wallet.generate()
+    wallet, _ = Wallet.generate()
     address = wallet.export_address()
     view_key, spend_key = Wallet.import_address(address)
     assert view_key == wallet.view_public_key
@@ -18,22 +18,22 @@ def test_wallet_address_roundtrip():
 
 
 def test_key_image_consistency():
-    wallet = Wallet.generate()
+    wallet, _ = Wallet.generate()
     assert wallet.key_image() == wallet.key_image()
-    other = Wallet.generate()
+    other, _ = Wallet.generate()
     assert wallet.key_image() != other.key_image()
 
 
 def test_shared_secret_symmetry():
-    alice = Wallet.generate()
-    bob = Wallet.generate()
+    alice, _ = Wallet.generate()
+    bob, _ = Wallet.generate()
     secret_ab = alice.create_shared_secret(bob.view_public_key)
     secret_ba = bob.create_shared_secret(alice.view_public_key)
     assert secret_ab == secret_ba
 
 
 def test_public_keys_tuple_matches_properties():
-    wallet = Wallet.generate()
+    wallet, _ = Wallet.generate()
     view, spend = wallet.public_keys()
     assert view == wallet.view_public_key
     assert spend == wallet.spend_public_key
@@ -46,9 +46,9 @@ def test_import_address_rejects_invalid_payloads(invalid):
 
 
 def test_recipient_can_detect_and_decrypt_transaction():
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    decoy = Wallet.generate()
+    sender, _ = Wallet.generate()
+    recipient, _ = Wallet.generate()
+    decoy, _ = Wallet.generate()
 
     tx = create_transaction(sender, recipient, amount=42, ring_members=[sender, decoy])
     tx_dict = tx.to_dict()
@@ -66,9 +66,9 @@ def test_recipient_can_detect_and_decrypt_transaction():
 
 
 def test_decrypt_fails_for_non_recipient():
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    outsider = Wallet.generate()
+    sender, _ = Wallet.generate()
+    recipient, _ = Wallet.generate()
+    outsider, _ = Wallet.generate()
 
     tx = create_transaction(sender, recipient, amount=7, ring_members=[sender, outsider])
     tx_dict = tx.to_dict()
@@ -81,9 +81,9 @@ def test_decrypt_fails_for_non_recipient():
 
 
 def test_audit_bundle_verification_roundtrip():
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    decoy = Wallet.generate()
+    sender, _ = Wallet.generate()
+    recipient, _ = Wallet.generate()
+    decoy, _ = Wallet.generate()
 
     tx = create_transaction(sender, recipient, amount=55, ring_members=[sender, decoy])
     bundle = tx.audit_bundle
