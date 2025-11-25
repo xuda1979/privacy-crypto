@@ -113,15 +113,13 @@ def create_transaction(
     encrypted_amount = base64.b32encode(encrypted_amount_bytes).decode("ascii")
 
     # Pedersen commitment for the confidential amount.
-    blinding = crypto_utils.random_scalar()
-    commitment = crypto_utils.pedersen_commit(amount, blinding)
-    proof_point, s1, s2 = crypto_utils.prove_commitment(amount, blinding)
+    bit_commitments, proofs, total_blinding = crypto_utils.prove_range(amount)
+    commitment = crypto_utils.pedersen_commit(amount, total_blinding)
 
     commitment_dict = {
         "commitment": _encode_point(commitment),
-        "t": _encode_point(proof_point),
-        "s1": _encode_scalar(s1),
-        "s2": _encode_scalar(s2),
+        "bit_commitments": [_encode_point(p) for p in bit_commitments],
+        "proofs": proofs,
     }
 
     key_image = _encode_point(sender.key_image())
@@ -156,7 +154,7 @@ def create_transaction(
         "tx_id": tx_id,
         "amount": amount,
         "amount_commitment": commitment_dict["commitment"],
-        "amount_blinding": _encode_scalar(blinding),
+        "amount_blinding": _encode_scalar(total_blinding),
         "view_public_key": _encode_point(sender.view_public_key),
         "stealth_address": _encode_point(stealth_public),
         "memo": memo,
@@ -191,15 +189,13 @@ def create_coinbase_transaction(
     )
     encrypted_amount = base64.b32encode(encrypted_amount_bytes).decode("ascii")
 
-    blinding = crypto_utils.random_scalar()
-    commitment = crypto_utils.pedersen_commit(amount, blinding)
-    proof_point, s1, s2 = crypto_utils.prove_commitment(amount, blinding)
+    bit_commitments, proofs, total_blinding = crypto_utils.prove_range(amount)
+    commitment = crypto_utils.pedersen_commit(amount, total_blinding)
 
     commitment_dict = {
         "commitment": _encode_point(commitment),
-        "t": _encode_point(proof_point),
-        "s1": _encode_scalar(s1),
-        "s2": _encode_scalar(s2),
+        "bit_commitments": [_encode_point(p) for p in bit_commitments],
+        "proofs": proofs,
     }
 
     from .blockchain import COINBASE_KEY_IMAGE
