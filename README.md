@@ -13,6 +13,14 @@
 
 ---
 
+## Marketing & Profitability
+
+This project is designed not only for privacy and security but also for profitability and market growth. We have implemented several key features to ensure the financial success of the project and its founders.
+
+*   **Founder's Reward:** A 20% Founder's Reward is built into the block reward, providing a continuous funding stream for development and marketing efforts.
+*   **Airdrop Tool:** We have developed a powerful airdrop tool (`src/airdrop.py`) to distribute tokens to a wide audience, bootstrap our community, and generate market excitement.
+*   **Promotional Website:** A professional promotional website is available in the `docs` directory. This website is designed to attract investors and users by highlighting the key features and profit potential of our cryptocurrency. You can view the website by opening `docs/index.html` in your browser.
+
 ## 1) Why this design preserves privacy & resists blocking
 
 **On-chain privacy**

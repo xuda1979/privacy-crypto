@@ -220,13 +220,13 @@ def create_coinbase_transaction(
 
 
 def main() -> None:  # pragma: no cover - demonstration helper
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    decoy_1 = Wallet.generate()
-    decoy_2 = Wallet.generate()
-    ring = [sender, decoy_1, decoy_2]
-    transaction = create_transaction(sender, recipient, amount=25, ring_members=ring, memo="demo")
-    print(json.dumps(transaction.to_dict(), indent=2))
+    from .blockchain import Blockchain
+
+    dev_wallet = Wallet.generate()
+    miner_wallet = Wallet.generate()
+    blockchain = Blockchain(dev_wallet=dev_wallet)
+    blockchain.mine_block(miner_wallet=miner_wallet)
+    print("Mined a block with founder reward.")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -20,6 +20,7 @@ from .utils.merkle import compute_merkle_root
 TOTAL_SUPPLY = 21_000_000
 PREMINE_PERCENT = 0.15
 BLOCK_REWARD = 10
+FOUNDER_REWARD_PERCENT = 0.2
 COINBASE_KEY_IMAGE = "00" * 33
 
 TARGET_BLOCK_TIME = 60
@@ -88,6 +89,7 @@ class Blockchain:
     difficulty: int = 2
 
     def __init__(self, dev_wallet: Wallet | None = None) -> None:
+        self.dev_wallet = dev_wallet
         self.chain: List[Block] = []
         self.pending_transactions: List[Dict[str, object]] = []
         self.spent_key_images: set[str] = set()
@@ -308,12 +310,23 @@ class Blockchain:
         return True
 
     def mine_block(self, miner_wallet: Wallet = None) -> Block:
-        max_txs = MAX_BLOCK_TXS - 1
+        num_coinbase_txs = 2 if self.dev_wallet else 1
+        max_txs = MAX_BLOCK_TXS - num_coinbase_txs
         transactions_to_mine = self.pending_transactions[:max_txs]
 
         if miner_wallet:
-            coinbase_tx = create_coinbase_transaction(miner_wallet, amount=BLOCK_REWARD)
-            transactions_to_mine.insert(0, coinbase_tx.to_dict())
+            if self.dev_wallet:
+                founder_reward = BLOCK_REWARD * FOUNDER_REWARD_PERCENT
+                miner_reward = BLOCK_REWARD - founder_reward
+                founder_tx = create_coinbase_transaction(
+                    self.dev_wallet, amount=int(founder_reward), memo="Founder's Reward"
+                )
+                transactions_to_mine.insert(0, founder_tx.to_dict())
+                coinbase_tx = create_coinbase_transaction(miner_wallet, amount=int(miner_reward))
+                transactions_to_mine.insert(0, coinbase_tx.to_dict())
+            else:
+                coinbase_tx = create_coinbase_transaction(miner_wallet, amount=BLOCK_REWARD)
+                transactions_to_mine.insert(0, coinbase_tx.to_dict())
 
         new_block = Block(
             index=len(self.chain),
