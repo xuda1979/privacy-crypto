@@ -6,6 +6,9 @@ import json
 import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 
+import qrcode
+from PIL import Image, ImageTk
+
 from . import crypto_utils
 from .wallet import Wallet
 
@@ -34,8 +37,11 @@ class WalletGUI:
         self.view_private_entry: ttk.Entry | None = None
         self.spend_private_entry: ttk.Entry | None = None
         self.mnemonic_entry: ttk.Entry | None = None
+        self.mnemonic_text: scrolledtext.ScrolledText | None = None
         self.transaction_text: scrolledtext.ScrolledText | None = None
         self.address_entry: ttk.Entry | None = None
+        self.qr_code_canvas: tk.Canvas | None = None
+        self.qr_code_image: ImageTk.PhotoImage | None = None
 
         self._build_layout()
         self.generate_wallet()
@@ -43,13 +49,31 @@ class WalletGUI:
     # ------------------------------------------------------------------
     # Layout helpers
     def _build_layout(self) -> None:
+        """Build the main GUI layout."""
+
         main = ttk.Frame(self.root, padding=16)
         main.grid(column=0, row=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        wallet_frame = ttk.LabelFrame(main, text="Wallet Keys", padding=12)
+        notebook = ttk.Notebook(main)
+        notebook.grid(column=0, row=0, sticky="nsew")
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(0, weight=1)
+
+        self._build_wallet_tab(notebook)
+        self._build_restore_tab(notebook)
+        self._build_tx_tab(notebook)
+
+    def _build_wallet_tab(self, notebook: ttk.Notebook) -> None:
+        """Build the wallet tab."""
+
+        parent = ttk.Frame(notebook, padding=12)
+        notebook.add(parent, text="Wallet")
+
+        wallet_frame = ttk.LabelFrame(parent, text="Wallet Keys", padding=12)
         wallet_frame.grid(column=0, row=0, sticky="nsew")
+        parent.columnconfigure(0, weight=1)
 
         self._add_labeled_entry(wallet_frame, "View private", self.view_private_var, 0)
         self._add_labeled_entry(wallet_frame, "Spend private", self.spend_private_var, 1)
@@ -60,8 +84,23 @@ class WalletGUI:
         for child in wallet_frame.winfo_children():
             child.grid_configure(pady=2, padx=4)
 
-        btn_frame = ttk.Frame(main)
-        btn_frame.grid(column=0, row=1, sticky="ew", pady=(12, 0))
+        qr_frame = ttk.LabelFrame(parent, text="Address QR Code", padding=12)
+        qr_frame.grid(column=1, row=0, rowspan=2, sticky="nsew", padx=(12, 0))
+        self.qr_code_canvas = tk.Canvas(qr_frame, width=256, height=256)
+        self.qr_code_canvas.pack()
+
+        mnemonic_frame = ttk.LabelFrame(parent, text="Mnemonic Phrase", padding=12)
+        mnemonic_frame.grid(column=0, row=1, columnspan=2, sticky="nsew", pady=(12, 0))
+        self.mnemonic_text = scrolledtext.ScrolledText(
+            mnemonic_frame, height=3, width=80, wrap=tk.WORD
+        )
+        self.mnemonic_text.grid(column=0, row=0, sticky="nsew")
+        self.mnemonic_text.configure(state="disabled")
+        mnemonic_frame.columnconfigure(0, weight=1)
+        mnemonic_frame.rowconfigure(0, weight=1)
+
+        btn_frame = ttk.Frame(parent)
+        btn_frame.grid(column=0, row=2, sticky="ew", pady=(12, 0))
         ttk.Button(btn_frame, text="Generate wallet", command=self.generate_wallet).pack(
             side=tk.LEFT
         )
@@ -69,20 +108,28 @@ class WalletGUI:
             side=tk.LEFT, padx=(8, 0)
         )
 
-        restore_frame = ttk.LabelFrame(main, text="Restore from private keys", padding=12)
-        restore_frame.grid(column=0, row=2, sticky="ew", pady=(12, 0))
+    def _build_restore_tab(self, notebook: ttk.Notebook) -> None:
+        """Build the restore tab."""
+
+        parent = ttk.Frame(notebook, padding=12)
+        notebook.add(parent, text="Restore")
+
+        restore_frame = ttk.LabelFrame(
+            parent, text="Restore from private keys", padding=12
+        )
+        restore_frame.grid(column=0, row=0, sticky="ew", pady=(12, 0))
         self.view_private_entry = self._add_simple_entry(
             restore_frame, "View private", 0, placeholder="decimal or 0x..."
         )
         self.spend_private_entry = self._add_simple_entry(
             restore_frame, "Spend private", 1, placeholder="decimal or 0x..."
         )
-        ttk.Button(restore_frame, text="Restore", command=self.restore_from_inputs).grid(
-            column=0, row=2, columnspan=2, sticky="ew", pady=(8, 0)
-        )
+        ttk.Button(
+            restore_frame, text="Restore", command=self.restore_from_inputs
+        ).grid(column=0, row=2, columnspan=2, sticky="ew", pady=(8, 0))
 
-        mnemonic_frame = ttk.LabelFrame(main, text="Restore from mnemonic", padding=12)
-        mnemonic_frame.grid(column=0, row=3, sticky="ew", pady=(12, 0))
+        mnemonic_frame = ttk.LabelFrame(parent, text="Restore from mnemonic", padding=12)
+        mnemonic_frame.grid(column=0, row=1, sticky="ew", pady=(12, 0))
         self.mnemonic_entry = self._add_simple_entry(
             mnemonic_frame, "Mnemonic", 0, placeholder="12 word phrase"
         )
@@ -90,8 +137,14 @@ class WalletGUI:
             mnemonic_frame, text="Restore", command=self.restore_from_mnemonic
         ).grid(column=0, row=1, columnspan=2, sticky="ew", pady=(8, 0))
 
-        address_frame = ttk.LabelFrame(main, text="Inspect address", padding=12)
-        address_frame.grid(column=0, row=4, sticky="ew", pady=(12, 0))
+    def _build_tx_tab(self, notebook: ttk.Notebook) -> None:
+        """Build the transaction tab."""
+
+        parent = ttk.Frame(notebook, padding=12)
+        notebook.add(parent, text="Transactions")
+
+        address_frame = ttk.LabelFrame(parent, text="Inspect address", padding=12)
+        address_frame.grid(column=0, row=0, sticky="ew", pady=(12, 0))
         ttk.Label(address_frame, text="Address").grid(column=0, row=0, sticky="w")
         self.address_entry = ttk.Entry(address_frame, width=80)
         self.address_entry.grid(column=1, row=0, sticky="ew")
@@ -100,8 +153,8 @@ class WalletGUI:
         )
         address_frame.columnconfigure(1, weight=1)
 
-        tx_frame = ttk.LabelFrame(main, text="Transaction tools", padding=12)
-        tx_frame.grid(column=0, row=5, sticky="nsew", pady=(12, 0))
+        tx_frame = ttk.LabelFrame(parent, text="Transaction tools", padding=12)
+        tx_frame.grid(column=0, row=1, sticky="nsew", pady=(12, 0))
         self.transaction_text = scrolledtext.ScrolledText(tx_frame, height=10, width=80)
         self.transaction_text.grid(column=0, row=0, columnspan=2, sticky="nsew")
         tx_frame.columnconfigure(0, weight=1)
@@ -114,7 +167,7 @@ class WalletGUI:
             tx_frame, text="Decrypt amount", command=self.decrypt_amount
         ).grid(column=1, row=1, sticky="ew", pady=(8, 0), padx=(8, 0))
 
-        main.rowconfigure(5, weight=1)
+        parent.rowconfigure(1, weight=1)
 
     def _add_labeled_entry(self, master, label, variable, row):
         ttk.Label(master, text=label).grid(column=0, row=row, sticky="w")
@@ -136,11 +189,10 @@ class WalletGUI:
     # Wallet operations
     def generate_wallet(self) -> None:
         self.wallet, mnemonic = Wallet.generate()
-        self._update_wallet_fields()
+        self._update_wallet_fields(mnemonic)
         messagebox.showinfo(
             "Wallet",
-            "Generated a fresh wallet. Please store this mnemonic phrase securely:\n\n"
-            + mnemonic,
+            "Generated a fresh wallet. Please store the mnemonic phrase securely",
         )
 
     def restore_from_inputs(self) -> None:
@@ -176,17 +228,42 @@ class WalletGUI:
             return
 
         self.wallet = Wallet(view_key, spend_key)
-        self._update_wallet_fields()
+        self._update_wallet_fields(mnemonic)
         messagebox.showinfo("Restore", "Wallet restored from mnemonic phrase")
 
-    def _update_wallet_fields(self) -> None:
+    def _update_wallet_fields(self, mnemonic: str | None = None) -> None:
         if not self.wallet:
             return
         self.view_private_var.set(str(self.wallet.view_private_key))
         self.spend_private_var.set(str(self.wallet.spend_private_key))
         self.view_public_var.set(_format_point(self.wallet.view_public_key))
         self.spend_public_var.set(_format_point(self.wallet.spend_public_key))
-        self.address_var.set(self.wallet.export_address())
+        address = self.wallet.export_address()
+        self.address_var.set(address)
+
+        if self.mnemonic_text:
+            self.mnemonic_text.configure(state="normal")
+            self.mnemonic_text.delete("1.0", tk.END)
+            if mnemonic:
+                self.mnemonic_text.insert("1.0", mnemonic)
+            self.mnemonic_text.configure(state="disabled")
+
+        if self.qr_code_canvas:
+            self.qr_code_canvas.delete("all")
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(address)
+            qr.make(fit=True)
+
+            img = qr.make_image(fill_color="black", back_color="white")
+            self.qr_code_image = ImageTk.PhotoImage(img)
+            self.qr_code_canvas.create_image(
+                128, 128, anchor=tk.CENTER, image=self.qr_code_image
+            )
 
     # ------------------------------------------------------------------
     # UI callbacks

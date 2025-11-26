@@ -13,9 +13,9 @@ def test_genesis_block_pow():
 
 
 def test_transaction_creation_and_validation():
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    decoy = Wallet.generate()
+    sender, _ = Wallet.generate()
+    recipient, _ = Wallet.generate()
+    decoy, _ = Wallet.generate()
     ring = [sender, decoy]
     tx = create_transaction(sender, recipient, amount=10, ring_members=ring)
     tx_dict = tx.to_dict()
@@ -29,9 +29,9 @@ def test_transaction_creation_and_validation():
 
 
 def test_double_spend_detection():
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    decoy = Wallet.generate()
+    sender, _ = Wallet.generate()
+    recipient, _ = Wallet.generate()
+    decoy, _ = Wallet.generate()
     ring = [sender, decoy]
 
     tx = create_transaction(sender, recipient, amount=5, ring_members=ring)
@@ -46,9 +46,9 @@ def test_double_spend_detection():
 
 
 def test_tampered_transaction_rejected():
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    decoy = Wallet.generate()
+    sender, _ = Wallet.generate()
+    recipient, _ = Wallet.generate()
+    decoy, _ = Wallet.generate()
     ring = [sender, decoy]
 
     tx = create_transaction(sender, recipient, amount=7, ring_members=ring)
@@ -62,9 +62,9 @@ def test_tampered_transaction_rejected():
 
 
 def test_chain_validation_catches_tampering():
-    sender = Wallet.generate()
-    recipient = Wallet.generate()
-    decoy = Wallet.generate()
+    sender, _ = Wallet.generate()
+    recipient, _ = Wallet.generate()
+    decoy, _ = Wallet.generate()
     ring = [sender, decoy]
 
     tx = create_transaction(sender, recipient, amount=3, ring_members=ring)
