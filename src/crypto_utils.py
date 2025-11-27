@@ -132,6 +132,12 @@ def hash_to_point(label: bytes) -> Point:
 H = hash_to_point(b"privacy-crypto-secondary-generator")
 
 
+def generate_key_image(private_key: int, public_point: Point) -> Point:
+    """Compute the key image I = x * Hp(P) for a one-time key."""
+    hp_p = hash_to_point(point_to_bytes(public_point))
+    return scalar_mult(private_key, hp_p)
+
+
 def generate_mnemonic() -> str:
     """Generate a 12-word mnemonic phrase."""
     return Mnemonic().phrase

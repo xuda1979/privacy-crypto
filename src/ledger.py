@@ -37,7 +37,7 @@ class DetectedOutput:
     timestamp: float
     block_index: int | None
     amount_commitment: str
-    one_time_private_key: int
+    one_time_private_key: int # To spend it later
 
 
 @dataclass
@@ -49,6 +49,7 @@ class OutgoingTransfer:
     timestamp: float
     block_index: int | None
     ring_size: int
+    amount: int # Amount spent (input amount)
 
 
 @dataclass
@@ -61,53 +62,89 @@ class WalletScanner:
 
     def __post_init__(self) -> None:
         self._seen_tx_ids: set[str] = set()
-        self._wallet_key_image = self.wallet.key_image()
+        # Outgoing detection is harder with one-time keys.
+        # We need to check if ANY input key image belongs to us.
+        # Key Image I = x * Hp(P).
+        # To check if I is ours, we need to know x (one-time private key).
+        # This requires us to have tracked our received outputs and their private keys.
+        self.known_key_images: Dict[str, int] = {} # KeyImage -> Amount
+
+    def precompute_key_images(self, outputs: List[DetectedOutput]):
+        """Derive key images for all known outputs to detect spends."""
+        for out in outputs:
+            # We need the ephemeral public key to reconstruct P?
+            # Actually, `out` contains `one_time_private_key`.
+            # P = xG.
+            # I = x * Hp(P).
+            x = out.one_time_private_key
+            P = crypto_utils.scalar_mult(x, crypto_utils.G)
+            I = crypto_utils.generate_key_image(x, P)
+            I_str = base64.b64encode(crypto_utils.point_to_bytes(I)).decode("ascii")
+            self.known_key_images[I_str] = out.amount
 
     def scan_transaction(self, transaction: Dict[str, object], *, block_index: int | None = None) -> None:
         tx_id = transaction.get("tx_id")
         if isinstance(tx_id, str) and tx_id in self._seen_tx_ids:
             return
 
-        if self.wallet.belongs_to_transaction(transaction):
-            amount = self.wallet.decrypt_transaction_amount(transaction)
-            one_time_private = self.wallet.derive_one_time_private_key(transaction)
-            commitment = transaction.get("amount_commitment")
-            commitment_str = commitment if isinstance(commitment, str) else ""
-            record = DetectedOutput(
-                tx_id=tx_id or "",
-                amount=amount,
-                memo=transaction.get("memo"),
-                timestamp=_safe_timestamp(transaction.get("timestamp", 0.0)),
-                block_index=block_index,
-                amount_commitment=commitment_str,
-                one_time_private_key=one_time_private,
-            )
-            self.received_outputs.append(record)
-            if isinstance(tx_id, str):
-                self._seen_tx_ids.add(tx_id)
-            return
+        # Scan for Incoming Outputs
+        detected_incoming = False
+        for output in transaction.get("outputs", []):
+            if self.wallet.belongs_to_output(output):
+                # We can calculate one-time private key now
+                # belongs_to_output does the check but doesn't return the key.
+                # Logic duplicated from Wallet...
+                ephemeral = self.wallet._decode_point(output["ephemeral_public_key"])
+                shared_point = self.wallet._shared_point_with(ephemeral)
+                tweak = crypto_utils.hash_to_int(crypto_utils.point_to_bytes(shared_point))
+                one_time_private = (tweak + self.wallet.spend_private_key) % crypto_utils.CURVE_ORDER
 
-        try:
-            key_image_value = transaction["key_image"]
-            if not isinstance(key_image_value, str):
-                return
-            key_image_point = _decode_point(key_image_value)
-        except (KeyError, ValueError):
-            return
+                amount = output["amount"] # Public now
 
-        if key_image_point == self._wallet_key_image:
-            ring_public_keys = transaction.get("ring_public_keys")
-            ring_size = len(ring_public_keys) if isinstance(ring_public_keys, list) else 0
-            record = OutgoingTransfer(
-                tx_id=tx_id or "",
-                memo=transaction.get("memo"),
-                timestamp=_safe_timestamp(transaction.get("timestamp", 0.0)),
-                block_index=block_index,
-                ring_size=ring_size,
-            )
-            self.outgoing_transactions.append(record)
-            if isinstance(tx_id, str):
-                self._seen_tx_ids.add(tx_id)
+                record = DetectedOutput(
+                    tx_id=tx_id or "",
+                    amount=amount,
+                    memo=transaction.get("memo"),
+                    timestamp=_safe_timestamp(transaction.get("timestamp", 0.0)),
+                    block_index=block_index,
+                    amount_commitment=output.get("amount_commitment", ""),
+                    one_time_private_key=one_time_private,
+                )
+                self.received_outputs.append(record)
+                detected_incoming = True
+
+                # Precompute key image for this new output so we can detect if it's spent later
+                P = crypto_utils.scalar_mult(one_time_private, crypto_utils.G)
+                I = crypto_utils.generate_key_image(one_time_private, P)
+                I_str = base64.b64encode(crypto_utils.point_to_bytes(I)).decode("ascii")
+                self.known_key_images[I_str] = amount
+
+        if detected_incoming and isinstance(tx_id, str):
+            self._seen_tx_ids.add(tx_id)
+
+        # Scan for Outgoing Inputs (Spends)
+        detected_outgoing = False
+        for inp in transaction.get("inputs", []):
+            key_image = inp.get("key_image")
+            if key_image in self.known_key_images:
+                # We spent this!
+                ring_size = len(inp.get("ring_public_keys", []))
+                amount = self.known_key_images[key_image]
+
+                record = OutgoingTransfer(
+                    tx_id=tx_id or "",
+                    memo=transaction.get("memo"),
+                    timestamp=_safe_timestamp(transaction.get("timestamp", 0.0)),
+                    block_index=block_index,
+                    ring_size=ring_size,
+                    amount=amount
+                )
+                self.outgoing_transactions.append(record)
+                detected_outgoing = True
+
+        if detected_outgoing and isinstance(tx_id, str):
+            self._seen_tx_ids.add(tx_id)
+
 
     def scan_transactions(self, transactions: Iterable[Dict[str, object]], *, block_index: int | None = None) -> None:
         for transaction in transactions:

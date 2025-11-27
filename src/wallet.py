@@ -7,7 +7,7 @@ import binascii
 import json
 import os
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List, Optional
 
 from ecdsa.ellipticcurve import Point
 from nacl import pwhash, secret, utils
@@ -16,6 +16,8 @@ from nacl.exceptions import CryptoError
 from . import crypto_utils
 from .utils.serialization import canonical_hash
 
+# We need to type hint Blockchain but can't import it due to circular dependency.
+# So we use forward reference in docstrings or methods.
 
 @dataclass
 class Wallet:
@@ -125,8 +127,10 @@ class Wallet:
         return view_point, spend_point
 
     def key_image(self) -> Point:
-        """Derive a key image to prevent double spending."""
-
+        """Derive a key image to prevent double spending.
+        Deprecated: This derived a constant Key Image for the wallet.
+        New transactions use Key Images derived from One-Time Private Keys.
+        """
         public_bytes = crypto_utils.point_to_bytes(self.spend_public_key)
         hashed_point = crypto_utils.hash_to_point(public_bytes)
         return crypto_utils.scalar_mult(self.spend_private_key, hashed_point)
@@ -160,12 +164,11 @@ class Wallet:
             self.spend_public_key, crypto_utils.scalar_mult(tweak, crypto_utils.G)
         )
 
-    def belongs_to_transaction(self, transaction: Dict[str, object]) -> bool:
-        """Return ``True`` if *transaction* pays to this wallet."""
-
+    def belongs_to_output(self, output: Dict[str, object]) -> bool:
+        """Return ``True`` if *output* pays to this wallet."""
         try:
-            ephemeral = self._decode_point(transaction["ephemeral_public_key"])
-            stealth_target = self._decode_point(transaction["stealth_address"])
+            ephemeral = self._decode_point(output["ephemeral_public_key"])
+            stealth_target = self._decode_point(output["address"])
         except (KeyError, ValueError):
             return False
 
@@ -173,38 +176,41 @@ class Wallet:
         expected = self._stealth_point_from_shared(shared_point)
         return expected == stealth_target
 
-    def decrypt_transaction_amount(self, transaction: Dict[str, object]) -> int:
-        """Return the plaintext amount embedded in *transaction* for this wallet."""
+    def scan_blockchain(self, blockchain: "Blockchain") -> List[Dict[str, object]]:
+        """Scan blockchain for UTXOs belonging to this wallet."""
+        owned_utxos = []
 
-        if not self.belongs_to_transaction(transaction):
-            raise ValueError("Transaction is not addressed to this wallet")
+        # We also need to check if they are spent
+        spent_key_images = blockchain.spent_key_images
 
-        ephemeral = self._decode_point(transaction["ephemeral_public_key"])
-        shared_secret = crypto_utils.derive_shared_secret(
-            self.view_private_key, ephemeral
-        )
-        box = secret.SecretBox(shared_secret)
+        for block in blockchain.chain:
+            for tx in block.transactions:
+                for output in tx.get("outputs", []):
+                    if self.belongs_to_output(output):
+                        # Calculate Key Image to check if spent
+                        try:
+                            ephemeral = self._decode_point(output["ephemeral_public_key"])
+                            shared_point = self._shared_point_with(ephemeral)
+                            tweak = crypto_utils.hash_to_int(crypto_utils.point_to_bytes(shared_point))
+                            one_time_priv = (tweak + self.spend_private_key) % crypto_utils.CURVE_ORDER
+                            one_time_pub = crypto_utils.scalar_mult(one_time_priv, crypto_utils.G)
 
-        try:
-            ciphertext = base64.b32decode(transaction["encrypted_amount"].encode("ascii"))
-        except (KeyError, ValueError, TypeError) as exc:  # pragma: no cover - defensive
-            raise ValueError("Invalid encrypted amount payload") from exc
+                            key_image_point = crypto_utils.generate_key_image(one_time_priv, one_time_pub)
+                            key_image_str = base64.b64encode(crypto_utils.point_to_bytes(key_image_point)).decode("ascii")
 
-        plaintext = box.decrypt(ciphertext)
-        if len(plaintext) != 8:
-            raise ValueError("Encrypted amount has unexpected length")
-        return int.from_bytes(plaintext, "big")
+                            if key_image_str not in spent_key_images:
+                                # It's a valid UTXO
+                                utxo = {
+                                    "stealth_public_key": output["address"],
+                                    "amount": output["amount"],
+                                    "ephemeral_public_key": output["ephemeral_public_key"],
+                                    "key_image_if_spent": key_image_str
+                                }
+                                owned_utxos.append(utxo)
+                        except Exception:
+                            continue
 
-    def derive_one_time_private_key(self, transaction: Dict[str, object]) -> int:
-        """Return the private key corresponding to the transaction's stealth address."""
-
-        if not self.belongs_to_transaction(transaction):
-            raise ValueError("Transaction is not addressed to this wallet")
-
-        ephemeral = self._decode_point(transaction["ephemeral_public_key"])
-        shared_point = self._shared_point_with(ephemeral)
-        tweak = crypto_utils.hash_to_int(crypto_utils.point_to_bytes(shared_point))
-        return (tweak + self.spend_private_key) % crypto_utils.CURVE_ORDER
+        return owned_utxos
 
 
 def verify_audit_bundle(bundle: Dict[str, object]) -> bool:
@@ -262,4 +268,3 @@ def verify_audit_bundle(bundle: Dict[str, object]) -> bool:
 
 
 __all__ = ["Wallet", "verify_audit_bundle"]
-
