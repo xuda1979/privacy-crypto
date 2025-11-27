@@ -46,8 +46,8 @@ def main():
 
             # Generate decoy wallets to create a valid ring for the transaction.
             # Using unique members is required to pass validation.
-            decoy1, _ = Wallet.generate()
-            decoy2, _ = Wallet.generate()
+            decoy1, _ = Wallet.generate(include_mnemonic=True)
+            decoy2, _ = Wallet.generate(include_mnemonic=True)
             ring_members = [sender_wallet, decoy1, decoy2]
 
             tx = create_transaction(

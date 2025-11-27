@@ -38,6 +38,9 @@ def compute_hash(block: "Block") -> str:
         "previous_hash": block.previous_hash,
         "nonce": block.nonce,
     }
+    if block.version > 1:
+        block_dict["version"] = block.version
+
     # Hash only the block header, not the full transaction bodies
     serialized = json.dumps(block_dict, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -52,6 +55,7 @@ class Block:
     nonce: int = 0
     hash: str = ""
     merkle_root: str = ""
+    version: int = 1
 
     def __post_init__(self):
         if not self.merkle_root:
@@ -131,13 +135,27 @@ class Blockchain:
 
     def _save_chain(self) -> None:
         with open(DB_FILE, "w") as f:
-            data = [asdict(b) for b in self.chain]
+            chain_data = [asdict(b) for b in self.chain]
+            data = {
+                "storage_version": 1,
+                "chain": chain_data,
+            }
             json.dump(data, f, indent=2)
 
     def _load_chain(self) -> None:
         print(f"[storage] Loading blockchain from {DB_FILE}...")
         with open(DB_FILE, "r") as f:
-            data = json.load(f)
+            raw_data = json.load(f)
+
+            if isinstance(raw_data, list):
+                # Legacy format: raw list of blocks
+                data = raw_data
+            elif isinstance(raw_data, dict):
+                # New format: dict with metadata
+                data = raw_data.get("chain", [])
+            else:
+                data = []
+
             self.chain = [Block(**item) for item in data]
             for block in self.chain:
                 for tx in block.transactions:
