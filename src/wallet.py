@@ -25,11 +25,12 @@ class Wallet:
     spend_private_key: int
 
     @classmethod
-    def generate(cls) -> "Wallet":
+    def generate(cls, include_mnemonic: bool = False) -> "Wallet" | Tuple["Wallet", str]:
         mnemonic = crypto_utils.generate_mnemonic()
         view_private = crypto_utils.keys_from_mnemonic(mnemonic)
         spend_private = crypto_utils.keys_from_mnemonic(mnemonic, passphrase="spend")
-        return cls(view_private, spend_private)
+        wallet = cls(view_private, spend_private)
+        return (wallet, mnemonic) if include_mnemonic else wallet
 
     def save_to_file(self, filename: str, password: str) -> None:
         """Encrypt and save wallet keys to *filename* using *password*."""
