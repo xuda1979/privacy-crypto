@@ -22,7 +22,7 @@ _dex = Dex()
 
 # Initialize Blockchain with a Dev Wallet for the pre-mine
 print("--- GENESIS INITIALIZATION ---")
-_dev_wallet = Wallet.generate()
+_dev_wallet, _ = Wallet.generate()
 print("DEV WALLET (15% PRE-MINE) KEYS:")
 print(f"  View Private:  {_dev_wallet.view_private_key}")
 print(f"  Spend Private: {_dev_wallet.spend_private_key}")
@@ -133,7 +133,7 @@ def _format_wallet(wallet_id: str, wallet: Wallet) -> WalletSummary:
 def create_wallet() -> WalletResponse:
     """Generate a new wallet and return its credentials."""
 
-    wallet = Wallet.generate()
+    wallet, _ = Wallet.generate()
     wallet_id = uuid.uuid4().hex
     _wallet_store[wallet_id] = wallet
     return WalletResponse(
@@ -203,7 +203,7 @@ def mine_block() -> MineResponse:
     # For this demo, we use a 'miner' wallet stored locally or generate one.
     miner_id = "miner_wallet"
     if miner_id not in _wallet_store:
-        _wallet_store[miner_id] = Wallet.generate()
+        _wallet_store[miner_id], _ = Wallet.generate()
 
     miner_wallet = _wallet_store[miner_id]
 
@@ -242,7 +242,8 @@ def reset_state() -> None:
     import os
     if os.path.exists("blockchain_data.json"):
         os.remove("blockchain_data.json")
-    _blockchain = Blockchain(dev_wallet=Wallet.generate())
+    _dev_wallet, _ = Wallet.generate()
+    _blockchain = Blockchain(dev_wallet=_dev_wallet)
     global _dex
     _dex = Dex()
 
