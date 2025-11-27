@@ -188,8 +188,8 @@ class WalletGUI:
     # ------------------------------------------------------------------
     # Wallet operations
     def generate_wallet(self) -> None:
-        self.wallet, mnemonic = Wallet.generate()
-        self._update_wallet_fields(mnemonic)
+        self.wallet, mnemonic = Wallet.generate(include_mnemonic=True)
+        self._update_wallet_fields()
         messagebox.showinfo(
             "Wallet",
             "Generated a fresh wallet. Please store the mnemonic phrase securely",

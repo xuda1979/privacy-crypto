@@ -1,4 +1,12 @@
+.env*
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
 .pytest_cache/
-.mypy_cache/
+sender_wallet.json
+recipients.json
 blockchain_data.json
