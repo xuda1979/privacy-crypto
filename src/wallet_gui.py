@@ -135,7 +135,7 @@ class WalletGUI:
     # ------------------------------------------------------------------
     # Wallet operations
     def generate_wallet(self) -> None:
-        self.wallet, mnemonic = Wallet.generate()
+        self.wallet, mnemonic = Wallet.generate(include_mnemonic=True)
         self._update_wallet_fields()
         messagebox.showinfo(
             "Wallet",
