@@ -13,9 +13,9 @@ def blockchain():
 
 @pytest.fixture
 def wallets():
-    sender, _ = Wallet.generate()
-    recipient, _ = Wallet.generate()
-    decoys = [Wallet.generate()[0] for _ in range(2)]
+    sender, _ = Wallet.generate(include_mnemonic=True)
+    recipient, _ = Wallet.generate(include_mnemonic=True)
+    decoys = [Wallet.generate(include_mnemonic=True)[0] for _ in range(2)]
     return sender, recipient, decoys
 
 
@@ -26,7 +26,7 @@ def test_scanner_detects_incoming_outputs(blockchain, wallets):
     blockchain.add_transaction(tx1.to_dict())
     block = blockchain.mine_block()
 
-    second_sender, _ = Wallet.generate()
+    second_sender, _ = Wallet.generate(include_mnemonic=True)
     tx2 = create_transaction(second_sender, recipient, amount=7, ring_members=[second_sender, *decoys])
     blockchain.add_transaction(tx2.to_dict())
 
