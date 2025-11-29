@@ -63,7 +63,15 @@ def main():
             print(f"Error creating transaction for {address}: {e}")
 
     print("Airdrop transactions created and added to the pending pool.")
-    print("Mine a block to confirm the transactions.")
+    print("Minding blocks to confirm transactions...")
+    try:
+        # Mine enough blocks to process all pending transactions
+        # Note: This uses the sender_wallet as the miner, so they get the rewards too!
+        while len(blockchain.pending_transactions) > 0:
+            block = blockchain.mine_block(miner_wallet=sender_wallet)
+            print(f"Mined block {block.index} with {len(block.transactions)} transactions.")
+    except Exception as e:
+        print(f"Error mining blocks: {e}")
 
 
 if __name__ == "__main__":
