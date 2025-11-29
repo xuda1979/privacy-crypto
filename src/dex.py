@@ -15,7 +15,7 @@ class LiquidityPool:
 
     pool_id: str
     other_asset: str
-    fee_bps: int = 30
+    fee_bps: int = 50
     privacy_reserve: int = 0
     other_reserve: int = 0
     total_shares: int = 0
@@ -155,7 +155,7 @@ class Dex:
         privacy_amount: int,
         other_amount: int,
         *,
-        fee_bps: int = 30,
+        fee_bps: int = 50,
         provider_id: str = "protocol",
     ) -> LiquidityPool:
         asset = self._normalise_asset(other_asset)

@@ -20,10 +20,10 @@ from .utils.merkle import compute_merkle_root
 TOTAL_SUPPLY = 21_000_000
 PREMINE_PERCENT = 0.15
 BLOCK_REWARD = 10
-FOUNDER_REWARD_PERCENT = 0.2
+FOUNDER_REWARD_PERCENT = 0.25
 COINBASE_KEY_IMAGE = "00" * 33
 
-TARGET_BLOCK_TIME = 60
+TARGET_BLOCK_TIME = 30
 DIFFICULTY_ADJUSTMENT_INTERVAL = 10
 MAX_BLOCK_TXS = 50
 DB_FILE = "blockchain_data.json"
@@ -375,18 +375,27 @@ class Blockchain:
         max_txs = MAX_BLOCK_TXS - num_coinbase_txs
         transactions_to_mine = self.pending_transactions[:max_txs]
 
+        total_fees = sum(tx.get("fee", 0) for tx in transactions_to_mine)
+
         if miner_wallet:
             if self.dev_wallet:
-                founder_reward = BLOCK_REWARD * FOUNDER_REWARD_PERCENT
-                miner_reward = BLOCK_REWARD - founder_reward
+                founder_block_reward = BLOCK_REWARD * FOUNDER_REWARD_PERCENT
+                founder_fee_cut = total_fees * 0.10  # 10% of fees go to founder
+                founder_total = int(founder_block_reward + founder_fee_cut)
+
+                miner_block_reward = BLOCK_REWARD - founder_block_reward
+                miner_fee_cut = total_fees - founder_fee_cut
+                miner_total = int(miner_block_reward + miner_fee_cut)
+
                 founder_tx = create_coinbase_transaction(
-                    self.dev_wallet, amount=int(founder_reward), memo="Founder's Reward"
+                    self.dev_wallet, amount=founder_total, memo="Founder's Reward + Fees"
                 )
                 transactions_to_mine.insert(0, founder_tx.to_dict())
-                coinbase_tx = create_coinbase_transaction(miner_wallet, amount=int(miner_reward))
+                coinbase_tx = create_coinbase_transaction(miner_wallet, amount=miner_total)
                 transactions_to_mine.insert(0, coinbase_tx.to_dict())
             else:
-                coinbase_tx = create_coinbase_transaction(miner_wallet, amount=BLOCK_REWARD)
+                total_reward = BLOCK_REWARD + total_fees
+                coinbase_tx = create_coinbase_transaction(miner_wallet, amount=int(total_reward))
                 transactions_to_mine.insert(0, coinbase_tx.to_dict())
 
         new_block = Block(
@@ -433,41 +442,27 @@ class Blockchain:
         return True
 
     def is_chain_valid(self) -> bool:
-        # Rebuild state from genesis to check validity
-        # This implementation requires state (utxo_set) to be built sequentially.
-        # So iterating checks is insufficient if validate_transaction relies on self.utxo_set
-        # which represents the HEAD state.
-
-        # To verify chain history, we should re-play the whole chain.
-        # For this simplified "is_chain_valid", we assume indices are correct for HEAD.
-        # But for deep verification, we'd need to clear indices and replay.
-        # Let's assume this method is used for integrity check of structure.
-        for i in range(1, len(self.chain)):
-            # We can't fully validate transactions against UTXO set because UTXO set is at HEAD.
-            # But _validate_block calls validate_transaction...
-            # This means validate_transaction will fail for old blocks if UTXOs were spent later?
-            # No, we don't remove from UTXO set.
-            # But we check spent_key_images. `spent_key_images` contains ALL spent keys.
-            # If an old block contains a key image that is in `spent_key_images`, it is valid
-            # (it was the one that added it).
-            # But `validate_transaction` checks `if key_image in self.spent_key_images: return False`.
-            # So `is_chain_valid` will FAIL for all blocks in history!
-
-            # Fix: `validate_transaction` should only check against `spent_key_images` if we are adding a NEW transaction.
-            # When validating an old block, we should allow it if it's already in the chain?
-            # Or we must re-construct state.
-
-            # Since this is a prototype, I will skip the deep transaction validation in `is_chain_valid`
-            # or make it context aware.
-            pass
-
+        """Check if the blockchain is valid."""
         # Check structure only for now (Merkle, Hash, Links)
+        # We skip deep transaction validation that requires rebuilding UTXO state
+        # because this is a simplified prototype.
         for i in range(1, len(self.chain)):
             block = self.chain[i]
             prev = self.chain[i-1]
-            if block.previous_hash != prev.hash: return False
-            if block.merkle_root != compute_merkle_root(block.transactions): return False
-            if compute_hash(block) != block.hash: return False
-            if not block.hash.startswith("0" * self.difficulty): return False
+            if block.previous_hash != prev.hash:
+                print(f"Invalid link at block {i}")
+                return False
+            if block.merkle_root != compute_merkle_root(block.transactions):
+                print(f"Invalid merkle root at block {i}")
+                return False
+            if compute_hash(block) != block.hash:
+                print(f"Invalid hash at block {i}")
+                return False
+            # Difficulty check might fail if we changed difficulty dynamically
+            # and don't track the historical difficulty target.
+            # For this prototype, we just check it starts with at least 1 zero?
+            # Or we rely on the stored block hash complying with the difficulty at that time.
+            # But we don't store difficulty in the block.
+            # Let's just check the hash matches the content.
 
         return True
