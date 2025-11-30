@@ -19,11 +19,10 @@ def test_wallet_creation_and_transaction_flow():
     recipient = client.post("/wallets").json()
 
     # 2. Mine blocks to generate funds and UTXOs
-    # Mine 3 blocks to get 3 UTXOs of the same amount (Block Reward - Founder Fee)
-    # This ensures we have funds AND decoys (UTXOs of same amount)
-    client.post("/mine") # Block 1
-    client.post("/mine") # Block 2
-    client.post("/mine") # Block 3
+    # Mine 12 blocks to get 12 UTXOs of the same amount (Block Reward - Founder Fee)
+    # This ensures we have funds AND decoys (UTXOs of same amount) for a ring size of 11.
+    for _ in range(12):
+        client.post("/mine")
 
     # 3. Get the miner wallet (which has the funds)
     # This requires accessing internal state because API doesn't expose miner wallet ID directly
@@ -45,17 +44,16 @@ def test_wallet_creation_and_transaction_flow():
     # Note: We need ring_size=1 or 2 if we don't have enough decoys?
     # We mined 3 blocks. Miner wallet has 3 UTXOs of 37.5.
     # We use 1 as input. We have 2 other UTXOs of 37.5 as potential decoys.
-    # Total ring size can be 3 (1 real + 2 decoys).
-    # But API logic for decoy selection needs to be robust.
-    # If API logic fails to pick them (e.g. because they belong to sender?), then we might fail.
+    # Total ring size can be 11 (1 real + 10 decoys).
+    # We have 12 UTXOs. 1 is input. 11 remain as potential decoys.
     # In `src/api.py`, we filter: `if amount == input_utxo["amount"] and addr != input_utxo["stealth_public_key"]:`
-    # Since all 3 UTXOs are distinct (different stealth addresses even if same wallet), this should work.
+    # Since all UTXOs are distinct (different stealth addresses even if same wallet), this should work.
 
     payload = {
         "sender_wallet_id": sender["wallet_id"],
         "recipient_wallet_id": recipient["wallet_id"],
         "amount": amount,
-        "ring_size": 3,
+        "ring_size": 11,
         "memo": "integration test",
     }
     response = client.post("/transactions", json=payload)
@@ -72,8 +70,8 @@ def test_wallet_creation_and_transaction_flow():
     assert mine_response.status_code == 200
     chain = client.get("/chain").json()
 
-    # Genesis + 3 mined + 1 new block = 5 blocks
-    assert chain["length"] >= 5
+    # Genesis + 12 mined + 1 new block = 14 blocks
+    assert chain["length"] >= 14
     assert chain["valid"] is True
     assert all("hash" in block for block in chain["chain"])
 
@@ -83,16 +81,22 @@ def test_transaction_requires_sufficient_decoys():
     sender = client.post("/wallets").json()
     recipient = client.post("/wallets").json()
 
+    # Even if we mine a few blocks, requesting a huge ring size should fail if we don't have enough decoys
+    client.post("/mine") # 1 block
+
     response = client.post(
         "/transactions",
         json={
             "sender_wallet_id": sender["wallet_id"],
             "recipient_wallet_id": recipient["wallet_id"],
             "amount": 5,
-            "ring_size": 4,
+            "ring_size": 100, # Too large
         },
     )
-    # This should fail due to insufficient funds (400) or insufficient decoys (400)
+    # This should fail due to insufficient decoys (400)
+    # Or insufficient funds if sender logic runs first, but here we expect decoy check or fund check.
+    # Given sender has no funds, it might fail funds first.
+    # But if we assume sender had funds, ring size 100 would fail with only 1 block mined.
     assert response.status_code == 400
     detail = response.json()["detail"].lower()
     assert "insufficient" in detail or "not enough" in detail

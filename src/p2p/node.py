@@ -43,6 +43,9 @@ BOOTSTRAP = [u.strip() for u in os.getenv("PEERS", "").split(",") if u.strip()]
 MIN_FEE_RATE = int(os.getenv("MIN_FEE_RATE", "0"))
 UVLOOP = bool(os.getenv("UVLOOP"))
 
+if not os.getenv("PROXY"):
+    print("[p2p] WARNING: No PROXY configured. IP addresses may be leaked. Set PROXY=socks5://127.0.0.1:9050 for Tor.")
+
 try:
     if UVLOOP:
         import uvloop  # type: ignore

@@ -287,7 +287,7 @@ class Blockchain:
             else:
                 sum_pseudo_commitments = crypto_utils.point_add(sum_pseudo_commitments, pseudo_comm_point)
 
-            if len(ring_keys) < 2:
+            if len(ring_keys) < 11:
                 return False
 
             # Construct Ring Vector: [[P1, C1-PC], [P2, C2-PC], ...]

@@ -4,8 +4,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-STEM_MIN_HOPS = int(os.getenv("DANDELION_STEM_MIN_HOPS", "2"))
-STEM_MAX_HOPS = int(os.getenv("DANDELION_STEM_MAX_HOPS", "8"))
+STEM_MIN_HOPS = int(os.getenv("DANDELION_STEM_MIN_HOPS", "5"))
+STEM_MAX_HOPS = int(os.getenv("DANDELION_STEM_MAX_HOPS", "12"))
 STEM_TIMEOUT_S = float(os.getenv("DANDELION_STEM_TIMEOUT_S", "12.0"))
 
 @dataclass
