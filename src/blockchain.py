@@ -18,8 +18,8 @@ from .utils.merkle import compute_merkle_root
 
 
 TOTAL_SUPPLY = 21_000_000
-PREMINE_PERCENT = 0.15
-BLOCK_REWARD = 10
+PREMINE_PERCENT = 0.20
+BLOCK_REWARD = 50
 FOUNDER_REWARD_PERCENT = 0.25
 COINBASE_KEY_IMAGE = "00" * 33
 
@@ -379,13 +379,13 @@ class Blockchain:
 
         if miner_wallet:
             if self.dev_wallet:
-                founder_block_reward = BLOCK_REWARD * FOUNDER_REWARD_PERCENT
-                founder_fee_cut = total_fees * 0.10  # 10% of fees go to founder
-                founder_total = int(founder_block_reward + founder_fee_cut)
+                founder_block_reward = int(BLOCK_REWARD * FOUNDER_REWARD_PERCENT)
+                founder_fee_cut = int(total_fees * 0.10)  # 10% of fees go to founder
+                founder_total = founder_block_reward + founder_fee_cut
 
                 miner_block_reward = BLOCK_REWARD - founder_block_reward
                 miner_fee_cut = total_fees - founder_fee_cut
-                miner_total = int(miner_block_reward + miner_fee_cut)
+                miner_total = miner_block_reward + miner_fee_cut
 
                 founder_tx = create_coinbase_transaction(
                     self.dev_wallet, amount=founder_total, memo="Founder's Reward + Fees"
