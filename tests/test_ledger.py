@@ -25,10 +25,10 @@ def test_scanner_detects_incoming_outputs(blockchain, wallets):
 
     input_utxo1 = mock_utxo(sender, amount=11)
     # We must add input to blockchain state for validation
-    blockchain.utxo_set[input_utxo1["stealth_public_key"]] = 11
+    blockchain.utxo_set[input_utxo1["stealth_public_key"]] = {"commitment": input_utxo1["amount_commitment"], "amount": 11}
 
     decoy_utxos = [mock_utxo(d, amount=11) for d in decoys]
-    for d in decoy_utxos: blockchain.utxo_set[d["stealth_public_key"]] = 11
+    for d in decoy_utxos: blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 11}
 
     tx1 = create_transaction(sender, recipient, amount=11, ring_members=[input_utxo1, *decoy_utxos], input_utxo=input_utxo1)
     blockchain.add_transaction(tx1.to_dict())
@@ -36,9 +36,9 @@ def test_scanner_detects_incoming_outputs(blockchain, wallets):
 
     second_sender, _ = Wallet.generate(include_mnemonic=True)
     input_utxo2 = mock_utxo(second_sender, amount=7)
-    blockchain.utxo_set[input_utxo2["stealth_public_key"]] = 7
+    blockchain.utxo_set[input_utxo2["stealth_public_key"]] = {"commitment": input_utxo2["amount_commitment"], "amount": 7}
     decoy_utxos2 = [mock_utxo(d, amount=7) for d in decoys]
-    for d in decoy_utxos2: blockchain.utxo_set[d["stealth_public_key"]] = 7
+    for d in decoy_utxos2: blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 7}
 
     tx2 = create_transaction(second_sender, recipient, amount=7, ring_members=[input_utxo2, *decoy_utxos2], input_utxo=input_utxo2)
     blockchain.add_transaction(tx2.to_dict())
@@ -60,9 +60,9 @@ def test_scanner_ignores_duplicates(blockchain, wallets):
     sender, recipient, decoys = wallets
 
     input_utxo = mock_utxo(sender, amount=5)
-    blockchain.utxo_set[input_utxo["stealth_public_key"]] = 5
+    blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 5}
     decoy_utxos = [mock_utxo(d, amount=5) for d in decoys]
-    for d in decoy_utxos: blockchain.utxo_set[d["stealth_public_key"]] = 5
+    for d in decoy_utxos: blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 5}
 
     tx = create_transaction(sender, recipient, amount=5, ring_members=[input_utxo, *decoy_utxos], input_utxo=input_utxo)
     tx_dict = tx.to_dict()

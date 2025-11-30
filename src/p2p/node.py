@@ -137,11 +137,33 @@ async def connector_task(url: str):
     """
 
     import websockets  # lazy import
+    import python_socks.asyncio
+    from urllib.parse import urlparse
+
+    proxy_url = os.getenv("PROXY")  # e.g. socks5://127.0.0.1:9050
 
     while True:
         peer_id: Optional[str] = None
         try:
-            async with websockets.connect(url + "/p2p", max_size=None) as ws:
+            connect_kwargs = {}
+            if proxy_url:
+                try:
+                    proxy = python_socks.asyncio.Proxy.from_url(proxy_url)
+                    parsed = urlparse(url)
+                    dest_host = parsed.hostname
+                    dest_port = parsed.port
+                    if not dest_port:
+                        dest_port = 443 if parsed.scheme == "wss" else 80
+
+                    if dest_host:
+                        sock = await proxy.connect(dest_host=dest_host, dest_port=dest_port)
+                        connect_kwargs["sock"] = sock
+                except Exception as e:
+                    print(f"[p2p] Proxy connection failed: {e}")
+                    await asyncio.sleep(5)
+                    continue
+
+            async with websockets.connect(url + "/p2p", max_size=None, **connect_kwargs) as ws:
                 # Hello (client -> server)
                 sk = PrivateKey.generate()
                 pk_b64 = base64.b64encode(bytes(sk.public_key)).decode("ascii")

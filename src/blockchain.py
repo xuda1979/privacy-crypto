@@ -181,8 +181,12 @@ class Blockchain:
 
             # Add Outputs to UTXO set
             for output in tx.get("outputs", []):
-                # Store Commitment (String) in UTXO set
-                self.utxo_set[output["address"]] = output["amount_commitment"]
+                # Store Commitment (String) and Amount (if public/coinbase) in UTXO set
+                # This helps finding decoys for coinbase spends (which have public amounts)
+                self.utxo_set[output["address"]] = {
+                    "commitment": output["amount_commitment"],
+                    "amount": output.get("amount", 0)
+                }
 
             # Mark Inputs as spent (Key Images)
             for inp in tx.get("inputs", []):
@@ -294,7 +298,13 @@ class Blockchain:
                 if ring_member_key not in self.utxo_set:
                     return False
 
-                utxo_comm_str = self.utxo_set[ring_member_key]
+                utxo_data = self.utxo_set[ring_member_key]
+                # Handle both legacy (str) and new (dict) format during migration/dev
+                if isinstance(utxo_data, str):
+                    utxo_comm_str = utxo_data
+                else:
+                    utxo_comm_str = utxo_data["commitment"]
+
                 utxo_comm_point = _decode_point(utxo_comm_str)
 
                 # C_diff = C_real - C_pseudo

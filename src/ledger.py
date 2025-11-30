@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 from dataclasses import dataclass, field
+import json
 from typing import Dict, Iterable, List
 
 from . import crypto_utils
@@ -99,7 +100,18 @@ class WalletScanner:
                 tweak = crypto_utils.hash_to_int(crypto_utils.point_to_bytes(shared_point))
                 one_time_private = (tweak + self.wallet.spend_private_key) % crypto_utils.CURVE_ORDER
 
-                amount = output["amount"] # Public now
+                amount = output["amount"] # Public now (0 if confidential)
+
+                # Decrypt if confidential
+                if amount == 0 and "encrypted_data" in output and output["encrypted_data"]:
+                    try:
+                        shared_secret = self.wallet.create_shared_secret(ephemeral)
+                        encrypted_bytes = base64.b64decode(output["encrypted_data"])
+                        decrypted_bytes = crypto_utils.decrypt_data(encrypted_bytes, shared_secret)
+                        data = json.loads(decrypted_bytes.decode("utf-8"))
+                        amount = data.get("amount", amount)
+                    except Exception:
+                        pass # Keep as 0
 
                 record = DetectedOutput(
                     tx_id=tx_id or "",

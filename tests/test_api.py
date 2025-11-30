@@ -42,6 +42,15 @@ def test_wallet_creation_and_transaction_flow():
     # Amount must be less than block reward (10 * 0.8 = 8)
     amount = 5
 
+    # Note: We need ring_size=1 or 2 if we don't have enough decoys?
+    # We mined 3 blocks. Miner wallet has 3 UTXOs of 37.5.
+    # We use 1 as input. We have 2 other UTXOs of 37.5 as potential decoys.
+    # Total ring size can be 3 (1 real + 2 decoys).
+    # But API logic for decoy selection needs to be robust.
+    # If API logic fails to pick them (e.g. because they belong to sender?), then we might fail.
+    # In `src/api.py`, we filter: `if amount == input_utxo["amount"] and addr != input_utxo["stealth_public_key"]:`
+    # Since all 3 UTXOs are distinct (different stealth addresses even if same wallet), this should work.
+
     payload = {
         "sender_wallet_id": sender["wallet_id"],
         "recipient_wallet_id": recipient["wallet_id"],
