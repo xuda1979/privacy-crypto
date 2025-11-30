@@ -16,6 +16,8 @@ from typing import Dict, Iterable, Tuple
 from ecdsa import SECP256k1, rfc6979
 from ecdsa.ellipticcurve import Point, PointJacobi
 from pybip39 import Mnemonic, Seed
+from nacl import secret, utils
+from nacl.exceptions import CryptoError
 
 
 CURVE = SECP256k1
@@ -185,6 +187,29 @@ def pedersen_commit(amount: int, blinding: int) -> Point:
     return point_add(scalar_mult(blinding, G), scalar_mult(amount, H))
 
 
+def encrypt_data(data: bytes, shared_secret: bytes) -> bytes:
+    """Encrypt data using NaCl SecretBox and a shared secret (32 bytes)."""
+    if len(shared_secret) != 32:
+        # Assuming shared_secret is 32 bytes (SHA-256 hash output from derive_shared_secret is 32 bytes)
+        raise ValueError("Shared secret must be 32 bytes")
+
+    box = secret.SecretBox(shared_secret)
+    nonce = utils.random(secret.SecretBox.NONCE_SIZE)
+    encrypted = box.encrypt(data, nonce)
+    return encrypted
+
+def decrypt_data(encrypted_data: bytes, shared_secret: bytes) -> bytes:
+    """Decrypt data using NaCl SecretBox and a shared secret."""
+    if len(shared_secret) != 32:
+        raise ValueError("Shared secret must be 32 bytes")
+
+    box = secret.SecretBox(shared_secret)
+    try:
+        decrypted = box.decrypt(encrypted_data)
+        return decrypted
+    except CryptoError as e:
+        raise ValueError("Decryption failed") from e
+
 from src.rangeproof import prove_range, verify_range
 
 
@@ -259,4 +284,3 @@ def decode_schnorr_signature(payload: Dict[str, str]) -> Tuple[Point, int]:
     r_point = bytes_to_point(r_bytes)
     s_value = bytes_to_int(s_bytes)
     return r_point, s_value
-

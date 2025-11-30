@@ -10,7 +10,7 @@ from typing import Dict, List, Sequence, Optional
 
 from nacl import secret, utils
 
-from . import crypto_utils, ring_signature
+from . import crypto_utils, ring_signature, rangeproof
 from .wallet import Wallet
 from .utils.serialization import canonical_hash
 
@@ -39,6 +39,7 @@ class TransactionOutput:
     encrypted_amount: Optional[str] = None # kept for potential future use or backward compatibility
     amount_commitment: str = ""
     commitment_proof: Dict[str, str] = field(default_factory=dict)
+    encrypted_data: Optional[str] = None # Encrypted {amount, blinding}
 
 @dataclass
 class Transaction:
@@ -98,7 +99,7 @@ def create_transaction(
     if amount <= 0:
         raise ValueError("Amount must be positive")
 
-    # 1. Validate Input
+    # 1. Validate Input (Local Wallet Check)
     if input_utxo['amount'] < amount + fee:
         raise ValueError(f"Insufficient funds in selected UTXO. Have {input_utxo['amount']}, need {amount + fee}")
 
@@ -122,38 +123,54 @@ def create_transaction(
     if crypto_utils.point_to_bytes(one_time_public_point) != crypto_utils.point_to_bytes(stealth_address_point):
          raise ValueError("Derived private key does not match UTXO stealth address. Not your UTXO?")
 
-    # 3. Build Ring
-    for member in ring_members:
-        if member['amount'] != input_utxo['amount']:
-            raise ValueError("All ring members must have the same amount as the input")
+    # 3. Create Pseudo Commitment for Input
+    # Try to recover input blinding factor if available
+    b_real = 0
+    if 'blinding_factor' in input_utxo:
+        b_real = input_utxo['blinding_factor']
 
-    ring_points = []
-    for member in ring_members:
-        pt = crypto_utils.bytes_to_point(base64.b64decode(member['stealth_public_key']))
-        ring_points.append(pt)
+    b_pseudo = crypto_utils.random_scalar()
+    pseudo_commitment = crypto_utils.pedersen_commit(input_utxo['amount'], b_pseudo)
 
-    ring_serialized = [_encode_point(p) for p in ring_points]
-
-    try:
-        signer_index = [m['stealth_public_key'] for m in ring_members].index(input_utxo['stealth_public_key'])
-    except ValueError:
-        raise ValueError("Input UTXO must be in ring members")
-
-    # 4. Create Outputs
+    # 4. Create Outputs with Commitments and Range Proofs
     tx_outputs = []
+
+    # We need Sum(b_inputs) == Sum(b_outputs) + b_fee
+    # b_pseudo - (b_dest + b_change) = 0 => b_pseudo = b_dest + b_change
+
+    b_dest = crypto_utils.random_scalar()
+    b_change = (b_pseudo - b_dest) % crypto_utils.CURVE_ORDER
 
     # Destination Output
     dest_ephemeral_scalar, dest_ephemeral_public, dest_stealth_public = crypto_utils.derive_stealth_address(
         recipient_wallet.view_public_key, recipient_wallet.spend_public_key
     )
 
-    dest_commitment = crypto_utils.pedersen_commit(amount, 0)
+    # Range Proof for Destination
+    dest_bits = 64
+    d_bit_comms, d_proofs, d_total_blinding = rangeproof.prove_range(amount, dest_bits)
+
+    # Use the total blinding from proof as b_dest to ensure proof validity
+    b_dest = d_total_blinding
+    dest_commitment = crypto_utils.pedersen_commit(amount, b_dest)
+
+    dest_proof_data = {
+        "bit_commitments": [_encode_point(p) for p in d_bit_comms],
+        "proofs": d_proofs
+    }
+
+    # Encrypt amount and blinding for recipient
+    dest_shared_secret = crypto_utils.derive_shared_secret(dest_ephemeral_scalar, recipient_wallet.view_public_key)
+    dest_payload = json.dumps({"amount": amount, "blinding": b_dest}).encode("utf-8")
+    dest_encrypted = crypto_utils.encrypt_data(dest_payload, dest_shared_secret)
 
     dest_output = {
         "address": _encode_point(dest_stealth_public),
-        "amount": amount,
+        "amount": 0, # HIDDEN
         "ephemeral_public_key": _encode_point(dest_ephemeral_public),
         "amount_commitment": _encode_point(dest_commitment),
+        "commitment_proof": dest_proof_data,
+        "encrypted_data": base64.b64encode(dest_encrypted).decode("ascii")
     }
     tx_outputs.append(dest_output)
 
@@ -162,36 +179,91 @@ def create_transaction(
         change_ephemeral_scalar, change_ephemeral_public, change_stealth_public = crypto_utils.derive_stealth_address(
             sender_wallet.view_public_key, sender_wallet.spend_public_key
         )
-        change_commitment = crypto_utils.pedersen_commit(change_amount, 0)
+
+        # Range Proof for Change
+        change_bits = 64
+        c_bit_comms, c_proofs, c_total_blinding = rangeproof.prove_range(change_amount, change_bits)
+        b_change_generated = c_total_blinding
+
+        change_commitment = crypto_utils.pedersen_commit(change_amount, b_change_generated)
+
+        change_proof_data = {
+            "bit_commitments": [_encode_point(p) for p in c_bit_comms],
+            "proofs": c_proofs
+        }
+
+        # Encrypt for self (change)
+        change_shared_secret = crypto_utils.derive_shared_secret(change_ephemeral_scalar, sender_wallet.view_public_key)
+        change_payload = json.dumps({"amount": change_amount, "blinding": b_change_generated}).encode("utf-8")
+        change_encrypted = crypto_utils.encrypt_data(change_payload, change_shared_secret)
 
         change_output = {
             "address": _encode_point(change_stealth_public),
-            "amount": change_amount,
+            "amount": 0, # HIDDEN
             "ephemeral_public_key": _encode_point(change_ephemeral_public),
             "amount_commitment": _encode_point(change_commitment),
+            "commitment_proof": change_proof_data,
+            "encrypted_data": base64.b64encode(change_encrypted).decode("ascii")
         }
         tx_outputs.append(change_output)
 
-    # 5. Sign Input
+        # Adjust b_pseudo
+        b_pseudo = (b_dest + b_change_generated) % crypto_utils.CURVE_ORDER
+        pseudo_commitment = crypto_utils.pedersen_commit(input_utxo['amount'], b_pseudo)
+    else:
+        # No change
+        b_pseudo = b_dest
+        pseudo_commitment = crypto_utils.pedersen_commit(input_utxo['amount'], b_pseudo)
+
+
+    # 5. Build Ring Vector and Sign Input
+    try:
+        signer_index = [m['stealth_public_key'] for m in ring_members].index(input_utxo['stealth_public_key'])
+    except ValueError:
+        raise ValueError("Input UTXO must be in ring members")
+
+    ring_vector = []
+
+    for member in ring_members:
+        p_stealth = crypto_utils.bytes_to_point(base64.b64decode(member['stealth_public_key']))
+
+        if 'amount_commitment' in member and member['amount_commitment']:
+            c_member = crypto_utils.bytes_to_point(base64.b64decode(member['amount_commitment']))
+        else:
+            # Fallback for legacy outputs
+            c_member = crypto_utils.pedersen_commit(member['amount'], 0)
+
+        c_diff = crypto_utils.point_add(c_member, crypto_utils.point_neg(pseudo_commitment))
+        ring_vector.append([p_stealth, c_diff])
+
+    # Key 1: Commitment Difference Key (b_real - b_pseudo)
+    priv_diff = (b_real - b_pseudo) % crypto_utils.CURVE_ORDER
+
+    private_keys = [one_time_private_key, priv_diff]
+
+    # Sign
     key_image_point = crypto_utils.generate_key_image(one_time_private_key, one_time_public_point)
     key_image = _encode_point(key_image_point)
+
+    ring_serialized = [m['stealth_public_key'] for m in ring_members]
 
     sig_message_payload = {
         "ring_public_keys": ring_serialized,
         "key_image": key_image,
-        "input_amount": input_utxo['amount'],
+        "pseudo_commitment": _encode_point(pseudo_commitment),
         "outputs": tx_outputs,
         "fee": fee,
         "memo": memo,
     }
     message = canonical_hash(sig_message_payload)
+    ring_signature_payload = ring_signature.sign(message, ring_vector, private_keys, signer_index)
 
-    ring_signature_payload = ring_signature.sign(message, ring_points, one_time_private_key, signer_index)
 
     input_data = {
-        "amount": input_utxo['amount'],
+        "amount": input_utxo['amount'], # Kept for backward compat but not used for balance check
         "key_image": key_image,
         "ring_public_keys": ring_serialized,
+        "pseudo_commitment": _encode_point(pseudo_commitment),
         "ring_signature": ring_signature_payload
     }
 
@@ -203,23 +275,24 @@ def create_transaction(
     )
     tx_id = tx.compute_tx_id()
 
-    # 6. Create Audit Bundle (Optional but requested for API test compatibility)
-    # We sign the destination amount info.
-    # Note: Original code used `encrypted_amount` etc.
-    # We use explicit amount.
+    # 6. Audit Bundle
+    # We encrypt a separate audit blob or assume standard audit bundle sufficient.
+    # Standard audit bundle signs explicit fields.
+    # Since we hid amount, audit bundle logic might need update if it relied on explicit amount in payload.
+    # But `Wallet.verify_audit_bundle` takes a bundle (dict).
+    # We can put the amount there. It's a selective disclosure proof.
 
     audit_payload = {
         "tx_id": tx_id,
         "amount": amount,
         "amount_commitment": dest_output["amount_commitment"],
-        "amount_blinding": _encode_scalar(0), # Explicit amount -> blinding 0
+        "amount_blinding": _encode_scalar(b_dest),
         "view_public_key": _encode_point(sender_wallet.view_public_key),
-        "stealth_address": dest_output["address"], # Destination address?
+        "stealth_address": dest_output["address"],
         "memo": memo,
         "timestamp": tx.timestamp,
     }
     audit_message = canonical_hash(audit_payload)
-    # Sender signs with VIEW key to prove they authorized/viewed it?
     signature = crypto_utils.schnorr_sign(audit_message, sender_wallet.view_private_key)
     tx.audit_bundle = {
         "payload": audit_payload,
@@ -240,13 +313,16 @@ def create_coinbase_transaction(
         recipient.view_public_key, recipient.spend_public_key
     )
 
+    # Coinbase uses 0 blinding for transparency/supply check
     commitment = crypto_utils.pedersen_commit(amount, 0)
 
     output = {
         "address": _encode_point(stealth_public),
-        "amount": amount,
+        "amount": amount, # Coinbase amount is explicit
         "ephemeral_public_key": _encode_point(ephemeral_public),
         "amount_commitment": _encode_point(commitment),
+        # Coinbase technically needs range proof too if we enforce it globally,
+        # but usually we trust coinbase or check explicit amount.
     }
 
     from .blockchain import COINBASE_KEY_IMAGE

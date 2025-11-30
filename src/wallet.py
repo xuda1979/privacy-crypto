@@ -200,11 +200,30 @@ class Wallet:
 
                             if key_image_str not in spent_key_images:
                                 # It's a valid UTXO
+
+                                # Decrypt data if available
+                                amount = output["amount"] # Fallback
+                                blinding_factor = 0 # Default
+
+                                if "encrypted_data" in output and output["encrypted_data"]:
+                                    try:
+                                        shared_secret = self.create_shared_secret(ephemeral)
+                                        encrypted_bytes = base64.b64decode(output["encrypted_data"])
+                                        decrypted_bytes = crypto_utils.decrypt_data(encrypted_bytes, shared_secret)
+                                        data = json.loads(decrypted_bytes.decode("utf-8"))
+                                        amount = data.get("amount", amount)
+                                        blinding_factor = data.get("blinding", 0)
+                                    except Exception:
+                                        # Decryption failed or malformed, fallback to plaintext or ignore
+                                        pass
+
                                 utxo = {
                                     "stealth_public_key": output["address"],
-                                    "amount": output["amount"],
+                                    "amount": amount,
                                     "ephemeral_public_key": output["ephemeral_public_key"],
-                                    "key_image_if_spent": key_image_str
+                                    "key_image_if_spent": key_image_str,
+                                    "blinding_factor": blinding_factor,
+                                    "amount_commitment": output.get("amount_commitment", "")
                                 }
                                 owned_utxos.append(utxo)
                         except Exception:
