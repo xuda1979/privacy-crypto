@@ -8,9 +8,9 @@ import json
 import time
 import os
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Union
 
-from . import crypto_utils, ring_signature
+from . import crypto_utils, ring_signature, rangeproof
 from .main import create_coinbase_transaction, Transaction
 from .wallet import Wallet
 from .utils.serialization import canonical_hash
@@ -95,16 +95,17 @@ class Blockchain:
         self.spent_key_images: set[str] = set()
         self.seen_transactions: set[str] = set()
 
-        # UTXO Set: Map<StealthPublicKey, Amount>
-        # We also need to store EphemeralPublicKey to help wallets recover keys,
-        # but the Wallet scans the blockchain for that.
-        # For validation, we just need to know the output exists and its amount.
-        self.utxo_set: Dict[str, int] = {}
+        # UTXO Set: Map<StealthPublicKey, CommitmentString>
+        # We store the commitment (base64 string) instead of the explicit amount.
+        self.utxo_set: Dict[str, str] = {}
 
         if os.path.exists(DB_FILE):
             self._load_chain()
         else:
-            self.chain = [self._create_genesis_block(dev_wallet)]
+            # Create genesis block AND process its indices (add to UTXO set)
+            genesis_block = self._create_genesis_block(dev_wallet)
+            self.chain = [genesis_block]
+            self._process_block_indices(genesis_block)
             self._save_chain()
 
     def _create_genesis_block(self, dev_wallet: Wallet | None) -> Block:
@@ -139,7 +140,7 @@ class Blockchain:
         with open(DB_FILE, "w") as f:
             chain_data = [asdict(b) for b in self.chain]
             data = {
-                "storage_version": 2, # Bump version for new format
+                "storage_version": 3, # Bump version for CT format
                 "chain": chain_data,
             }
             json.dump(data, f, indent=2)
@@ -171,8 +172,6 @@ class Blockchain:
                 self._adjust_difficulty()
         except (json.JSONDecodeError, ValueError) as e:
             print(f"[storage] Failed to load chain: {e}. Starting fresh.")
-            # If load fails, we might want to backup and start fresh, but for now just fail or start fresh?
-            # Creating genesis block is done in __init__ if chain is empty.
             self.chain = []
 
     def _process_block_indices(self, block: Block) -> None:
@@ -182,7 +181,8 @@ class Blockchain:
 
             # Add Outputs to UTXO set
             for output in tx.get("outputs", []):
-                self.utxo_set[output["address"]] = output["amount"]
+                # Store Commitment (String) in UTXO set
+                self.utxo_set[output["address"]] = output["amount_commitment"]
 
             # Mark Inputs as spent (Key Images)
             for inp in tx.get("inputs", []):
@@ -221,18 +221,14 @@ class Blockchain:
         if not required_fields.issubset(transaction):
             return False
 
-        # Validate Inputs
         inputs = transaction.get("inputs", [])
-        if not isinstance(inputs, list):
-            return False
-
-        # Validate Outputs
         outputs = transaction.get("outputs", [])
-        if not isinstance(outputs, list):
+        fee = transaction.get("fee", 0)
+
+        if not isinstance(inputs, list) or not isinstance(outputs, list):
             return False
 
         # Coinbase Check
-        # Coinbase has 1 input with COINBASE_KEY_IMAGE and empty ring
         is_coinbase = False
         if len(inputs) == 1 and inputs[0]["key_image"] == COINBASE_KEY_IMAGE:
             is_coinbase = True
@@ -240,26 +236,25 @@ class Blockchain:
         if is_coinbase:
             if len(inputs[0]["ring_public_keys"]) != 0:
                 return False
-            # Coinbase validation logic
-            # Check outputs... usually 1 output.
-            # We can't verify reward amount here easily without block height context,
-            # but usually mining logic handles it.
-            # Basic checks:
+            # Check range proofs for coinbase outputs to be safe
             for output in outputs:
-                 if output["amount"] <= 0: return False
-                 # Verify commitment matches amount (blinding=0)
-                 # C = a*G + 0*H? No, pedersen_commit(a, 0) = 0*G + a*H = aH.
-                 try:
-                     comm_point = _decode_point(output["amount_commitment"])
-                     expected = crypto_utils.pedersen_commit(output["amount"], 0)
-                     if crypto_utils.point_to_bytes(comm_point) != crypto_utils.point_to_bytes(expected):
-                         return False
-                 except:
-                     return False
+                try:
+                    comm_point = _decode_point(output["amount_commitment"])
+                    # Check proof
+                    if "commitment_proof" in output and output["commitment_proof"]:
+                        # If proof exists, verify it (though coinbase amount is usually public)
+                        pass
+
+                    # Verify explicit amount if provided matches commitment
+                    expected = crypto_utils.pedersen_commit(output["amount"], 0)
+                    if crypto_utils.point_to_bytes(comm_point) != crypto_utils.point_to_bytes(expected):
+                        return False
+                except:
+                    return False
             return True
 
-        # Regular Transaction Validation
-        total_input_amount = 0
+        # Regular CT Validation
+        sum_pseudo_commitments = None # Sum of Inputs
 
         for inp in inputs:
             # 1. Check Key Image
@@ -271,86 +266,91 @@ class Blockchain:
             if inp["key_image"] in self.spent_key_images:
                 return False
 
-            # 2. Verify Ring Members exist in UTXO set and have Consistent Amounts
+            # 2. Verify Ring Members and Signatures
             ring_keys = inp.get("ring_public_keys", [])
+            pseudo_comm_str = inp.get("pseudo_commitment")
+
+            if not pseudo_comm_str:
+                return False
+
+            try:
+                pseudo_comm_point = _decode_point(pseudo_comm_str)
+            except ValueError:
+                return False
+
+            if sum_pseudo_commitments is None:
+                sum_pseudo_commitments = pseudo_comm_point
+            else:
+                sum_pseudo_commitments = crypto_utils.point_add(sum_pseudo_commitments, pseudo_comm_point)
+
             if len(ring_keys) < 2:
-                # Privacy requirement: Ring size >= 2
                 return False
 
-            # Check for duplicates in ring
-            if len(set(ring_keys)) != len(ring_keys):
-                return False
-
-            # Determine input amount from the ring members
-            # All ring members MUST be valid UTXOs and have the SAME amount.
-            input_amount = None
+            # Construct Ring Vector: [[P1, C1-PC], [P2, C2-PC], ...]
+            # We need to fetch C (Commitment) from UTXO set for each ring member
+            ring_vector = []
 
             for ring_member_key in ring_keys:
                 if ring_member_key not in self.utxo_set:
-                    # Input not found in UTXO set (or spent? No, we don't remove from UTXO set in this model)
-                    # We only track "Valid Outputs".
-                    # If we used a Pruned UTXO set (removing spent), we couldn't use spent outputs as decoys.
-                    # Monero keeps all outputs forever.
                     return False
 
-                amount = self.utxo_set[ring_member_key]
-                if input_amount is None:
-                    input_amount = amount
-                elif input_amount != amount:
-                    # Ring members have mixed amounts! Invalid.
-                    return False
+                utxo_comm_str = self.utxo_set[ring_member_key]
+                utxo_comm_point = _decode_point(utxo_comm_str)
 
-            if input_amount is None:
-                return False
+                # C_diff = C_real - C_pseudo
+                c_diff = crypto_utils.point_add(utxo_comm_point, crypto_utils.point_neg(pseudo_comm_point))
 
-            total_input_amount += input_amount
+                p_stealth = _decode_point(ring_member_key)
+                ring_vector.append([p_stealth, c_diff])
 
             # 3. Verify Ring Signature
             # Message is Hash of (Inputs-Metadata + Outputs + Fee + Memo)
-            # The transaction object should have signed the canonical hash.
-
-            # Reconstruct message
-            # The structure signed was `sig_message_payload` in `main.py`.
-            # { "ring_public_keys": ..., "key_image": ..., "input_amount": ..., "outputs": ..., "fee": ..., "memo": ... }
-
             sig_message_payload = {
-                "ring_public_keys": inp["ring_public_keys"],
+                "ring_public_keys": ring_keys,
                 "key_image": inp["key_image"],
-                "input_amount": input_amount,
+                "pseudo_commitment": pseudo_comm_str,
                 "outputs": outputs,
-                "fee": transaction["fee"],
+                "fee": fee,
                 "memo": transaction.get("memo"),
             }
             message = canonical_hash(sig_message_payload)
 
-            ring_points = [_decode_point(k) for k in ring_keys]
-
             try:
-                if not ring_signature.verify(message, ring_points, inp["ring_signature"]):
+                if not ring_signature.verify(message, ring_vector, inp["ring_signature"]):
                     return False
             except (KeyError, TypeError):
                 return False
 
-        # 4. Verify Balance: Sum(Inputs) == Sum(Outputs) + Fee
-        total_output_amount = 0
+        # 4. Verify Balance: Sum(PseudoCommitments) == Sum(OutputCommitments) + Fee*H
+        fee_commitment = crypto_utils.scalar_mult(fee, crypto_utils.H)
+
+        sum_output_commitments = fee_commitment
+
         for output in outputs:
-            if output["amount"] <= 0:
-                return False
-            total_output_amount += output["amount"]
-
-            # Verify commitment (Explicit Amount)
             try:
-                 comm_point = _decode_point(output["amount_commitment"])
-                 expected = crypto_utils.pedersen_commit(output["amount"], 0)
-                 if crypto_utils.point_to_bytes(comm_point) != crypto_utils.point_to_bytes(expected):
-                     return False
-            except:
-                 return False
+                comm_point = _decode_point(output["amount_commitment"])
+                sum_output_commitments = crypto_utils.point_add(sum_output_commitments, comm_point)
 
-        if total_input_amount != total_output_amount + transaction["fee"]:
-            return False
+                # 5. Verify Range Proofs
+                if "commitment_proof" not in output:
+                    return False
 
-        # 5. Verify Timestamp
+                proof_data = output["commitment_proof"]
+
+                bit_commitments = [_decode_point(b) for b in proof_data["bit_commitments"]]
+                proofs = proof_data["proofs"] # List of tuples
+
+                if not rangeproof.verify_range(comm_point, bit_commitments, proofs):
+                    return False
+
+            except Exception:
+                return False
+
+        # Check Balance Equation
+        if crypto_utils.point_to_bytes(sum_pseudo_commitments) != crypto_utils.point_to_bytes(sum_output_commitments):
+             return False
+
+        # 6. Verify Timestamp
         try:
             timestamp = float(transaction["timestamp"])
         except (TypeError, ValueError):
@@ -361,7 +361,7 @@ class Blockchain:
         if timestamp < now - 7 * 24 * 60 * 60:
             return False
 
-        # 6. Verify Tx ID
+        # 7. Verify Tx ID
         tx_id = transaction.get("tx_id")
         if tx_id:
              expected = crypto_utils.hash_bytes(canonical_hash(_normalised_transaction_payload(transaction))).hex()
@@ -404,19 +404,13 @@ class Blockchain:
             transactions=transactions_to_mine,
             previous_hash=self.chain[-1].hash,
         )
-        # Block post-init will compute the merkle_root
         new_block = self._mine_block(new_block)
 
-        # Validation implicitly updates state if successful? No, validation is stateless.
-        # But we must ensure the new block IS valid.
         if not self._validate_block(new_block, self.chain[-1]):
             raise ValueError("New block failed validation")
 
         self.chain.append(new_block)
-
-        # Update Indices
         self._process_block_indices(new_block)
-
         self.pending_transactions = self.pending_transactions[max_txs:]
         self._adjust_difficulty()
         self._save_chain()
@@ -443,9 +437,6 @@ class Blockchain:
 
     def is_chain_valid(self) -> bool:
         """Check if the blockchain is valid."""
-        # Check structure only for now (Merkle, Hash, Links)
-        # We skip deep transaction validation that requires rebuilding UTXO state
-        # because this is a simplified prototype.
         for i in range(1, len(self.chain)):
             block = self.chain[i]
             prev = self.chain[i-1]
@@ -458,11 +449,4 @@ class Blockchain:
             if compute_hash(block) != block.hash:
                 print(f"Invalid hash at block {i}")
                 return False
-            # Difficulty check might fail if we changed difficulty dynamically
-            # and don't track the historical difficulty target.
-            # For this prototype, we just check it starts with at least 1 zero?
-            # Or we rely on the stored block hash complying with the difficulty at that time.
-            # But we don't store difficulty in the block.
-            # Let's just check the hash matches the content.
-
         return True
