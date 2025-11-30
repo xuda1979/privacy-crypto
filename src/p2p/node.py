@@ -5,6 +5,7 @@ import json as std_json
 import os
 import time
 import traceback
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional, Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -53,7 +54,6 @@ except Exception:
 # ------------------------------------------------------------------------------
 # App scaffolding
 # ------------------------------------------------------------------------------
-app = FastAPI(title="privacy-crypto P2P relay", version="0.1.0")
 
 # Peer bookkeeping
 PEERS: Dict[str, "Peer"] = {}
@@ -126,90 +126,6 @@ def mempool_prune():
 
 def peer_ids() -> list[str]:
     return list(PEERS.keys())
-
-
-# ------------------------------------------------------------------------------
-# WebSocket endpoint: /p2p
-# ------------------------------------------------------------------------------
-@app.websocket("/p2p")
-async def p2p_socket(ws: WebSocket):
-    await ws.accept()
-    # 1) handshake: client sends {"type":"hello","pubkey": b64}
-    hello = await ws.receive_json()
-    if hello.get("type") != "hello" or "pubkey" not in hello:
-        await ws.close(code=4000)
-        return
-
-    remote_pk = PublicKey(base64.b64decode(hello["pubkey"]))
-    sk = PrivateKey.generate()
-    local_pk_b64 = base64.b64encode(bytes(sk.public_key)).decode("ascii")
-    await ws.send_json({"type": "hello", "pubkey": local_pk_b64})
-
-    cipher = Cipher(sk, remote_pk)
-    peer_id = base64.b16encode(hashlib.sha256(bytes(remote_pk)).digest()[:8]).decode(
-        "ascii"
-    )
-    peer = Peer(ws, peer_id, cipher)
-    PEERS[peer_id] = peer
-
-    try:
-        while True:
-            msg = await ws.receive_json()
-            if msg.get("type") != "cipher":
-                continue
-            try:
-                blob = base64.b64decode(msg["blob"])
-                payload = cipher.decrypt(blob)
-                inner = _loads(payload)
-                await handle_peer_message(peer, inner)
-            except CryptoError:
-                # Drop malformed/unauthenticated frames
-                continue
-    except WebSocketDisconnect:
-        pass
-    except Exception:
-        traceback.print_exc()
-    finally:
-        PEERS.pop(peer_id, None)
-        try:
-            await ws.close()
-        except Exception:
-            pass
-
-
-# ------------------------------------------------------------------------------
-# P2P control endpoints
-# ------------------------------------------------------------------------------
-@app.get("/p2p/peers")
-async def p2p_peers():
-    mempool_prune()
-    return JSONResponse(
-        {
-            "peers": peer_ids(),
-            "mempool_size": len(MEMPOOL),
-            "seen_tx": len(SEEN_TX),
-            "min_fee_rate": MIN_FEE_RATE,
-        }
-    )
-
-
-@app.post("/p2p/submit")
-async def p2p_submit(body: dict):
-    """
-    Submit a transaction into the relay. The relay treats the tx as an opaque
-    object; validity checks are expected to happen at the API/miner. We still
-    enforce a minimal fee-rate knob if provided in the tx.
-    """
-
-    tx = body.get("tx")
-    if not isinstance(tx, dict):
-        return JSONResponse({"error": "tx must be an object"}, status_code=400)
-    fee = int(tx.get("fee", 0))
-    if fee < MIN_FEE_RATE:
-        return JSONResponse({"error": "fee below MIN_FEE_RATE"}, status_code=400)
-    tid = tx_id_from_obj(tx)
-    await relay_tx_local(tx, tid)
-    return JSONResponse({"ok": True, "tx_id": tid})
 
 
 # ------------------------------------------------------------------------------
@@ -355,19 +271,111 @@ def reset_state():
 # ------------------------------------------------------------------------------
 # Startup
 # ------------------------------------------------------------------------------
-@app.on_event("startup")
-async def _startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     # Periodic mempool pruning
     async def _prune():
         while True:
             mempool_prune()
             await asyncio.sleep(10)
 
-    asyncio.create_task(_prune())
+    prune_task = asyncio.create_task(_prune())
 
     # Connect to bootstrap peers
+    connector_tasks = []
     for url in BOOTSTRAP:
-        asyncio.create_task(connector_task(url))
+        connector_tasks.append(asyncio.create_task(connector_task(url)))
+
+    yield
+
+    prune_task.cancel()
+    for task in connector_tasks:
+        task.cancel()
+
+app = FastAPI(title="privacy-crypto P2P relay", version="0.1.0", lifespan=lifespan)
+
+# ------------------------------------------------------------------------------
+# WebSocket endpoint: /p2p
+# ------------------------------------------------------------------------------
+@app.websocket("/p2p")
+async def p2p_socket(ws: WebSocket):
+    await ws.accept()
+    # 1) handshake: client sends {"type":"hello","pubkey": b64}
+    hello = await ws.receive_json()
+    if hello.get("type") != "hello" or "pubkey" not in hello:
+        await ws.close(code=4000)
+        return
+
+    remote_pk = PublicKey(base64.b64decode(hello["pubkey"]))
+    sk = PrivateKey.generate()
+    local_pk_b64 = base64.b64encode(bytes(sk.public_key)).decode("ascii")
+    await ws.send_json({"type": "hello", "pubkey": local_pk_b64})
+
+    cipher = Cipher(sk, remote_pk)
+    peer_id = base64.b16encode(hashlib.sha256(bytes(remote_pk)).digest()[:8]).decode(
+        "ascii"
+    )
+    peer = Peer(ws, peer_id, cipher)
+    PEERS[peer_id] = peer
+
+    try:
+        while True:
+            msg = await ws.receive_json()
+            if msg.get("type") != "cipher":
+                continue
+            try:
+                blob = base64.b64decode(msg["blob"])
+                payload = cipher.decrypt(blob)
+                inner = _loads(payload)
+                await handle_peer_message(peer, inner)
+            except CryptoError:
+                # Drop malformed/unauthenticated frames
+                continue
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        traceback.print_exc()
+    finally:
+        PEERS.pop(peer_id, None)
+        try:
+            await ws.close()
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------------------
+# P2P control endpoints
+# ------------------------------------------------------------------------------
+@app.get("/p2p/peers")
+async def p2p_peers():
+    mempool_prune()
+    return JSONResponse(
+        {
+            "peers": peer_ids(),
+            "mempool_size": len(MEMPOOL),
+            "seen_tx": len(SEEN_TX),
+            "min_fee_rate": MIN_FEE_RATE,
+        }
+    )
+
+
+@app.post("/p2p/submit")
+async def p2p_submit(body: dict):
+    """
+    Submit a transaction into the relay. The relay treats the tx as an opaque
+    object; validity checks are expected to happen at the API/miner. We still
+    enforce a minimal fee-rate knob if provided in the tx.
+    """
+
+    tx = body.get("tx")
+    if not isinstance(tx, dict):
+        return JSONResponse({"error": "tx must be an object"}, status_code=400)
+    fee = int(tx.get("fee", 0))
+    if fee < MIN_FEE_RATE:
+        return JSONResponse({"error": "fee below MIN_FEE_RATE"}, status_code=400)
+    tid = tx_id_from_obj(tx)
+    await relay_tx_local(tx, tid)
+    return JSONResponse({"ok": True, "tx_id": tid})
 
 
 def main():
