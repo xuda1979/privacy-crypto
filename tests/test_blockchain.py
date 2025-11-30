@@ -29,14 +29,13 @@ def test_transaction_creation_and_validation():
     blockchain = Blockchain()
     # To validate, the UTXOs must exist in blockchain's UTXO set
     # Manually seed UTXO set
-    blockchain.utxo_set[input_utxo["stealth_public_key"]] = input_utxo["amount"]
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = decoy_utxo["amount"]
+    blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
+    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
 
     assert blockchain.validate_transaction(tx_dict)
 
-    # Check public amount visibility (we made amounts public)
-    # assert str(10).encode() not in tx_dict["encrypted_amount"].encode() # No longer true as amounts are public in outputs
-    assert tx_dict["outputs"][0]["amount"] == 10
+    # Check that amount is confidential (0)
+    assert tx_dict["outputs"][0]["amount"] == 0
 
     blockchain.add_transaction(tx_dict)
     mined_block = blockchain.mine_block()
@@ -56,8 +55,8 @@ def test_double_spend_detection():
     tx_dict = tx.to_dict()
 
     blockchain = Blockchain()
-    blockchain.utxo_set[input_utxo["stealth_public_key"]] = input_utxo["amount"]
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = decoy_utxo["amount"]
+    blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
+    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
 
     blockchain.add_transaction(tx_dict)
     blockchain.mine_block()
@@ -97,8 +96,8 @@ def test_tampered_transaction_rejected():
     tx_dict["inputs"][0]["ring_public_keys"][0] = tx_dict["inputs"][0]["ring_public_keys"][0][::-1]
 
     blockchain = Blockchain()
-    blockchain.utxo_set[input_utxo["stealth_public_key"]] = input_utxo["amount"]
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = decoy_utxo["amount"]
+    blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
+    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
 
     assert not blockchain.validate_transaction(tx_dict)
     with pytest.raises(ValueError):
@@ -116,8 +115,8 @@ def test_chain_validation_catches_tampering():
 
     tx = create_transaction(sender, recipient, amount=3, ring_members=ring, input_utxo=input_utxo, fee=0)
     blockchain = Blockchain()
-    blockchain.utxo_set[input_utxo["stealth_public_key"]] = input_utxo["amount"]
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = decoy_utxo["amount"]
+    blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
+    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
 
     blockchain.add_transaction(tx.to_dict())
     blockchain.mine_block()

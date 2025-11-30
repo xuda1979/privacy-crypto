@@ -62,6 +62,6 @@ def test_migration_legacy_to_new(tmp_path):
             saved_data = json.load(f)
 
         assert isinstance(saved_data, dict)
-        assert saved_data["storage_version"] == 2 # Updated expectation
+        assert saved_data["storage_version"] == 3 # Updated expectation
     finally:
         os.chdir(original_cwd)

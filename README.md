@@ -58,6 +58,7 @@ python -m src.wallet_gui
 - `P2P_HOST` / `P2P_PORT`：P2P 监听（默认 `0.0.0.0:9000`）
 - `PEERS`：逗号分隔的对等端，例如：`ws://node1:9000,ws://node2:9000`
 - `MIN_FEE_RATE`：mempool 最低费率（默认 `0`）
+- `PROXY`：SOCKS5 代理地址，用于 Tor/I2P 连接（例如 `socks5://127.0.0.1:9050`）
 
 ### Docker (single node)
 ```bash
@@ -154,7 +155,7 @@ python -m src.wallet_gui     # 手动验证 GUI 操作流程
 ## 5) Threat model & limitations
 
 * 这是演示性质原型，密码学与网络实现尚未经过第三方审计。  
-* Dandelion++ 降低但不能消灭网络层关联攻击；使用 Tor/I2P/混合拓扑可进一步增强（可在未来版本增加 SOCKS5 代理支持）。  
+* Dandelion++ 降低但不能消灭网络层关联攻击；使用 Tor/I2P/混合拓扑可进一步增强。P2P 层现已支持通过 `PROXY` 环境变量配置 SOCKS5 代理，以便接入 Tor 网络。
 * PoW 与节点多样性仍是可用性的关键，请避免单点部署。
 
 ---

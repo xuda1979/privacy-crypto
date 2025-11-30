@@ -1,3 +1,4 @@
+import json
 import base64
 
 import copy
@@ -65,8 +66,16 @@ def test_recipient_can_detect_and_decrypt_transaction():
     assert recipient.belongs_to_output(output)
     assert not decoy.belongs_to_output(output)
 
-    # In public amount model, amount is visible directly
-    assert output["amount"] == 42
+    # In confidential amount model, amount is 0 (hidden)
+    assert output["amount"] == 0
+
+    # Decrypt to verify real amount
+    ephemeral_pub = Wallet._decode_point(output["ephemeral_public_key"])
+    shared_secret = recipient.create_shared_secret(ephemeral_pub)
+    encrypted_bytes = base64.b64decode(output["encrypted_data"])
+    decrypted_bytes = crypto_utils.decrypt_data(encrypted_bytes, shared_secret)
+    data = json.loads(decrypted_bytes.decode("utf-8"))
+    assert data["amount"] == 42
 
     # Decryption of encrypted_amount (optional) - create_transaction currently leaves it empty or derived?
     # Actually create_transaction was updated to remove encryption for now, or did we keep it?

@@ -208,12 +208,22 @@ def submit_transaction(payload: TransactionRequest) -> TransactionResponse:
     # Efficient way? Iterate utxo_set.
 
     potential_decoys = []
-    for addr, amount in _blockchain.utxo_set.items():
-        if amount == input_utxo["amount"] and addr != input_utxo["stealth_public_key"]:
-            # We need the full UTXO struct (ephemeral key) for decoys?
-            # create_transaction takes a list of dicts with 'stealth_public_key'.
-            # It only needs stealth_public_key for decoys (to form ring).
-            potential_decoys.append({"stealth_public_key": addr, "amount": amount})
+    for addr, data in _blockchain.utxo_set.items():
+        # Handle dict format (new) vs potential old format
+        if isinstance(data, dict):
+            stored_amount = data["amount"]
+            commitment = data["commitment"]
+        else:
+            # Should not happen with new blockchain.py but for safety
+            stored_amount = 0
+            commitment = data
+
+        if stored_amount == input_utxo["amount"] and addr != input_utxo["stealth_public_key"]:
+            potential_decoys.append({
+                "stealth_public_key": addr,
+                "amount": stored_amount,
+                "amount_commitment": commitment
+            })
 
     if len(potential_decoys) < payload.ring_size - 1:
          # Fallback for demo: If not enough real decoys, generate fake ones?
