@@ -47,7 +47,7 @@ class TransactionRequest(BaseModel):
     sender_wallet_id: str
     recipient_wallet_id: str
     amount: int = Field(gt=0, description="Amount of coins to transfer")
-    ring_size: int = Field(default=3, ge=2, description="Number of members in the ring")
+    ring_size: int = Field(default=11, ge=11, description="Number of members in the ring")
     memo: str | None = Field(default=None, max_length=280)
 
 

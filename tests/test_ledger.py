@@ -16,7 +16,7 @@ def blockchain():
 def wallets():
     sender, _ = Wallet.generate(include_mnemonic=True)
     recipient, _ = Wallet.generate(include_mnemonic=True)
-    decoys = [Wallet.generate(include_mnemonic=True)[0] for _ in range(2)]
+    decoys = [Wallet.generate(include_mnemonic=True)[0] for _ in range(10)]
     return sender, recipient, decoys
 
 
@@ -30,6 +30,7 @@ def test_scanner_detects_incoming_outputs(blockchain, wallets):
     decoy_utxos = [mock_utxo(d, amount=11) for d in decoys]
     for d in decoy_utxos: blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 11}
 
+    # ring size 11 (1 input + 10 decoys)
     tx1 = create_transaction(sender, recipient, amount=11, ring_members=[input_utxo1, *decoy_utxos], input_utxo=input_utxo1)
     blockchain.add_transaction(tx1.to_dict())
     block = blockchain.mine_block()
@@ -64,6 +65,7 @@ def test_scanner_ignores_duplicates(blockchain, wallets):
     decoy_utxos = [mock_utxo(d, amount=5) for d in decoys]
     for d in decoy_utxos: blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 5}
 
+    # ring size 11 (1 input + 10 decoys)
     tx = create_transaction(sender, recipient, amount=5, ring_members=[input_utxo, *decoy_utxos], input_utxo=input_utxo)
     tx_dict = tx.to_dict()
     blockchain.add_transaction(tx_dict)

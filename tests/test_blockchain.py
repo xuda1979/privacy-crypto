@@ -15,13 +15,17 @@ def test_genesis_block_pow():
 def test_transaction_creation_and_validation():
     sender, _ = Wallet.generate(include_mnemonic=True)
     recipient, _ = Wallet.generate(include_mnemonic=True)
-    decoy, _ = Wallet.generate(include_mnemonic=True)
 
     # Need inputs. Create a mock UTXO for sender.
     input_utxo = mock_utxo(sender, amount=10)
-    decoy_utxo = mock_utxo(decoy, amount=10) # Decoy must have same amount
 
-    ring = [input_utxo, decoy_utxo]
+    # Create 10 decoys to satisfy ring size of 11
+    decoys = []
+    for _ in range(10):
+        d_wallet = Wallet.generate() # Wallet.generate() returns Wallet object, not tuple unless include_mnemonic=True
+        decoys.append(mock_utxo(d_wallet, amount=10))
+
+    ring = [input_utxo] + decoys
 
     tx = create_transaction(sender, recipient, amount=10, ring_members=ring, input_utxo=input_utxo, fee=0)
     tx_dict = tx.to_dict()
@@ -30,7 +34,8 @@ def test_transaction_creation_and_validation():
     # To validate, the UTXOs must exist in blockchain's UTXO set
     # Manually seed UTXO set
     blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
+    for d in decoys:
+        blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 10}
 
     assert blockchain.validate_transaction(tx_dict)
 
@@ -45,18 +50,18 @@ def test_transaction_creation_and_validation():
 def test_double_spend_detection():
     sender, _ = Wallet.generate(include_mnemonic=True)
     recipient, _ = Wallet.generate(include_mnemonic=True)
-    decoy, _ = Wallet.generate(include_mnemonic=True)
 
     input_utxo = mock_utxo(sender, amount=10)
-    decoy_utxo = mock_utxo(decoy, amount=10)
-    ring = [input_utxo, decoy_utxo]
+    decoys = [mock_utxo(Wallet.generate(), amount=10) for _ in range(10)]
+    ring = [input_utxo] + decoys
 
     tx = create_transaction(sender, recipient, amount=5, ring_members=ring, input_utxo=input_utxo, fee=0)
     tx_dict = tx.to_dict()
 
     blockchain = Blockchain()
     blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
+    for d in decoys:
+        blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 10}
 
     blockchain.add_transaction(tx_dict)
     blockchain.mine_block()
@@ -83,11 +88,10 @@ def test_double_spend_detection():
 def test_tampered_transaction_rejected():
     sender, _ = Wallet.generate(include_mnemonic=True)
     recipient, _ = Wallet.generate(include_mnemonic=True)
-    decoy, _ = Wallet.generate(include_mnemonic=True)
 
     input_utxo = mock_utxo(sender, amount=10)
-    decoy_utxo = mock_utxo(decoy, amount=10)
-    ring = [input_utxo, decoy_utxo]
+    decoys = [mock_utxo(Wallet.generate(), amount=10) for _ in range(10)]
+    ring = [input_utxo] + decoys
 
     tx = create_transaction(sender, recipient, amount=7, ring_members=ring, input_utxo=input_utxo, fee=0)
     tx_dict = tx.to_dict()
@@ -97,7 +101,8 @@ def test_tampered_transaction_rejected():
 
     blockchain = Blockchain()
     blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
+    for d in decoys:
+        blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 10}
 
     assert not blockchain.validate_transaction(tx_dict)
     with pytest.raises(ValueError):
@@ -107,16 +112,16 @@ def test_tampered_transaction_rejected():
 def test_chain_validation_catches_tampering():
     sender, _ = Wallet.generate(include_mnemonic=True)
     recipient, _ = Wallet.generate(include_mnemonic=True)
-    decoy, _ = Wallet.generate(include_mnemonic=True)
 
     input_utxo = mock_utxo(sender, amount=10)
-    decoy_utxo = mock_utxo(decoy, amount=10)
-    ring = [input_utxo, decoy_utxo]
+    decoys = [mock_utxo(Wallet.generate(), amount=10) for _ in range(10)]
+    ring = [input_utxo] + decoys
 
     tx = create_transaction(sender, recipient, amount=3, ring_members=ring, input_utxo=input_utxo, fee=0)
     blockchain = Blockchain()
     blockchain.utxo_set[input_utxo["stealth_public_key"]] = {"commitment": input_utxo["amount_commitment"], "amount": 10}
-    blockchain.utxo_set[decoy_utxo["stealth_public_key"]] = {"commitment": decoy_utxo["amount_commitment"], "amount": 10}
+    for d in decoys:
+        blockchain.utxo_set[d["stealth_public_key"]] = {"commitment": d["amount_commitment"], "amount": 10}
 
     blockchain.add_transaction(tx.to_dict())
     blockchain.mine_block()
